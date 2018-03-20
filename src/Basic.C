@@ -5475,11 +5475,11 @@ void TextMode(int Y)
 {
 	SMALL_RECT sr;
 	COORD Coord;
-	Coord.X = 120;	// Buffer columns
-	Coord.Y = 9999;	// Buffer rows
+	Coord.X = 80;	// Buffer columns
+	Coord.Y = 80;	// Buffer rows
 	sr.Top = 1;	// screen position  
 	sr.Left = 1;	// screen position 
-	sr.Right = 120;	// screen position
+	sr.Right = 80;	// screen position
 	sr.Bottom = Y;	// screen position
 	SetConsoleScreenBufferSize(hConsole, Coord);
 	SetConsoleWindowInfo(hConsole, TRUE, &sr);
