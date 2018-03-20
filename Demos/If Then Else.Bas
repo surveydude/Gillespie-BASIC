@@ -1,0 +1,5 @@
+10 CLS
+20 A=5
+30 B=4
+40 C=3
+50 IF A=5 AND B=4 AND C=3 THEN PRINT "A=5, b=4 and c=3"  ELSE PRINT "Not =" 
