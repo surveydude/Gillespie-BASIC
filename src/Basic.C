@@ -1,8 +1,10 @@
 //*****************************************************************************
 #define VERSION "Gillespie BASIC v1.52 for Windows by Kevin Diggins (2018)\n"
+//              Based on Chipmunk Basic 1.0 by Dave Gillespie 
 //*****************************************************************************
 
 #include "Basic.h"
+
 
 int main(int argc, char *argv[])
 {
@@ -38,12 +40,12 @@ int main(int argc, char *argv[])
 			strcpy(inbuf, join(2, "load ", enc("")));
 		//********************************************************************
 
-		ParseInput(&buf);	// buf is a tokenrec ptr
+		ParseInput(&buf);	         // buf is a tokenrec ptr
 
 		if (curline == 0)
 		{
-			stmtline = NULL;	// stmtline is a global linerec ptr
-			stmttok = buf;	// stmttok is a global tokenrec ptr
+			stmtline = NULL;	     // stmtline is a global linerec ptr
+			stmttok = buf;      	 // stmttok is a global tokenrec ptr
 			if (stmttok != NULL)
 				Execute();
 			DisposeTokens(&buf);
@@ -167,7 +169,7 @@ void Parse(char *inbuf, tokenrec **buf)
 					break;
 
 //*******************************************************************************************************
-				case 39:	//   39 = the REM single apostrophe character: '
+				case 39:	                //   39 = the REM single apostrophe character: '
 					t->kind = tokrem;
 					t->sp = (char *)calloc(MAXSTRINGVAR, 1);
 					sprintf(t->sp, "%.*s", (int)(strlen(inbuf) - i + 1), inbuf + i - 1);
@@ -760,19 +762,19 @@ void ListTokens(FILE *f, tokenrec *buf)
 				break;
 
 			case tokplus:
-				fprintf(f, " + ");
+				fprintf(f, "+");
 				break;
 
 			case tokminus:
-				fprintf(f, " - ");
+				fprintf(f, "-");
 				break;
 
 			case toktimes:
-				fprintf(f, " * ");
+				fprintf(f, "*");
 				break;
 
 			case tokdiv:
-				fprintf(f, " / ");
+				fprintf(f, "/");
 				break;
 
 			case tokup:
@@ -2541,6 +2543,8 @@ void cmdsave(struct LOC_exec *LINK)
 		strcpy(Str2, OurLoadedFname);
 	else
 		sprintf(Str2, "%s.Bas", stringexpr(Str1, LINK));
+
+	strcpy(OurLoadedFname, Str2);
 
 	f = fopen(Str2, "w");
 

@@ -154,22 +154,7 @@ void DisposeTokens(tokenrec**);
 void Parse(char*,tokenrec**);
 void ParseInput(tokenrec**);
 void ListTokens(FILE*, tokenrec*);
-
-
-
 void cmdload(BOOL,char*,struct LOC_exec*);
-
-
-
-
-
-
-
-
-
-
-
-
 
 //*****************************************************************************
 //                Support and Prototypes (from the BCX project)
@@ -188,18 +173,17 @@ void DoEvents (void);
 BOOL Exist(char *);
 BOOL Exist_A(char *);
 BOOL Exist_B(char *);
-
+int  Verify (char *, char *);
+int  VerifyInstr(char*,char*,int=0);
 char *enc (char*);
 char *join (int, ... );
 char *mid (char*, int, int=-1);
-int   Verify (char *, char *);
-int   VerifyInstr(char*,char*,int=0);
 char *str (double);
 char *space (int);
 char *Using(char*, double);
 char *trim(char*);
 char *ltrim(char*);
-char* rtrim (char*,char=32);
+char *rtrim (char*,char=32);
 char *ucase(char*);
 char *lcase(char*);
 char *mcase(char*);
@@ -221,8 +205,6 @@ char *_stristr_(char*, char*);
 char *inkey(void);
 double Round (double, int);
 
-HWND GetConsoleWndHandle(void);
-
 int instr(char*, char*, int = 0, int = 0);
 int like(char*, char*);
 int EoF(FILE*);
@@ -233,7 +215,9 @@ void cls(void);
 void color(long, long);
 void locate(int, int, int = 1, int = 12);
 void swap(byte*, byte*, int);
- 
+
+HWND GetConsoleWndHandle(void);
+
 //*****************************************************************************
 // Controls auto-indenting loops when LIST-ed - called by BumpUp() & BumpDown()
 //*****************************************************************************
@@ -303,11 +287,12 @@ static WIN32_FIND_DATA FindData;
 //                       Affects our console window
 //*****************************************************************************
 
+void HiLite(FILE*,char*);
 COORD cursor;
 HWND hConsole;
 int color_fg = 7;
 int color_bg = 0;
 
-void HiLite(FILE*,char*);
+
  
 
