@@ -1,25 +1,34 @@
 //*****************************************************************************
-#define VERSION "Gillespie BASIC v1.52 for Windows by Kevin Diggins (2018)\n"
+#define VERSION "Gillespie BASIC v1.53 for Windows by Kevin Diggins (2018)\n"
 //              Based on Chipmunk Basic 1.0 by Dave Gillespie 
 //*****************************************************************************
 
 #include "Basic.h"
 
 
-int main(int argc, char *argv[])
+void Initialize()
 {
-	Top_of_Jump_Buffer = NULL;
-//****************************************************************************
 	inbuf = (char *)calloc(MAXSTRINGVAR, 1);
-//****************************************************************************
-	Setup_Console();
-//****************************************************************************
 	OurLoadedFname = calloc(1024, 1);
 	linebase = 0;
 	varbase = 0;
 	loopbase = 0;
 	exitflag = FALSE;
-//****************************************************************************
+    Dirtyflag = FALSE;
+    ClearAll();
+}
+
+
+
+int main(int argc, char *argv[])
+{
+	Top_of_Jump_Buffer = NULL;
+//****************************** 
+    Initialize();
+//****************************** 
+	Setup_Console();
+//****************************** 
+
 	printf(VERSION);
 	do
 	{
@@ -40,12 +49,12 @@ int main(int argc, char *argv[])
 			strcpy(inbuf, join(2, "load ", enc("")));
 		//********************************************************************
 
-		ParseInput(&buf);	         // buf is a tokenrec ptr
+		ParseInput(&buf);	// buf is a tokenrec ptr
 
 		if (curline == 0)
 		{
-			stmtline = NULL;	     // stmtline is a global linerec ptr
-			stmttok = buf;      	 // stmttok is a global tokenrec ptr
+			stmtline = NULL;	// stmtline is a global linerec ptr
+			stmttok = buf;	// stmttok is a global tokenrec ptr
 			if (stmttok != NULL)
 				Execute();
 			DisposeTokens(&buf);
@@ -168,14 +177,14 @@ void Parse(char *inbuf, tokenrec **buf)
 					i++;
 					break;
 
-//*******************************************************************************************************
-				case 39:	                //   39 = the REM single apostrophe character: '
+//**************************************************************************************
+				case 39:	//   39 = the REM single apostrophe character: '
 					t->kind = tokrem;
 					t->sp = (char *)calloc(MAXSTRINGVAR, 1);
 					sprintf(t->sp, "%.*s", (int)(strlen(inbuf) - i + 1), inbuf + i - 1);
 					i = strlen(inbuf) + 1;
 					break;
-//*******************************************************************************************************
+//**************************************************************************************
 
 				case '+':
 					t->kind = tokplus;
@@ -301,6 +310,8 @@ void Parse(char *inbuf, tokenrec **buf)
 							t->kind = tokexp;
 						else if (!stricmp(token, "abs"))
 							t->kind = tokabs;
+						else if (!stricmp(token, "int"))
+							t->kind = tokint;
 						else if (!stricmp(token, "sgn"))
 							t->kind = toksgn;
 						else if (!stricmp(token, "keypress"))
@@ -385,6 +396,10 @@ void Parse(char *inbuf, tokenrec **buf)
 							t->kind = tokireplace_;
 						else if (!stricmp(token, "inputbox$"))
 							t->kind = tokinputbox;
+						else if (!stricmp(token, "ok_cancel"))
+							t->kind = tokokcancel;
+						else if (!stricmp(token, "yn_cancel"))
+							t->kind = tokyncancel;
 						else if (!stricmp(token, "using$"))
 							t->kind = tokusing_;
 						else if (!stricmp(token, "asc"))
@@ -417,6 +432,8 @@ void Parse(char *inbuf, tokenrec **buf)
 							t->kind = tokfalse;
 						else if (!stricmp(token, "pi"))
 							t->kind = tokpi;
+                        else if (!stricmp(token, "crlf$"))
+							t->kind = tokcrlf_;
 						else if (!stricmp(token, "eof"))
 							t->kind = tokeof;
 						else if (!stricmp(token, "close"))
@@ -509,9 +526,11 @@ void Parse(char *inbuf, tokenrec **buf)
 							t->kind = tokto;
 						else if (!stricmp(token, "step"))
 							t->kind = tokstep;
+						else if (!stricmp(token, "clear"))
+							t->kind = tokclear;
 						else if (!stricmp(token, "swap"))
 							t->kind = tokswap;
-						else if (!stricmp(token, "rem"))	// these will automatically be saved as single quotes
+						else if (!stricmp(token, "rem"))	// these will be automatically saved as single quotes
 						{
 							t->kind = tokrem;
 							t->sp = (char *)calloc(MAXSTRINGVAR, 1);
@@ -604,6 +623,15 @@ void Parse(char *inbuf, tokenrec **buf)
 		}
 	}
 	while (i <= strlen(inbuf));
+}
+
+//*****************************************************************************
+
+void ClearAll(void)	// tied to the new BASIC command:  CLEAR
+{
+	ClearVars();
+	ClearLoops();
+	RestoreData();
 }
 
 //*****************************************************************************
@@ -877,6 +905,10 @@ void ListTokens(FILE *f, tokenrec *buf)
 				HiLite(f, "SGN");
 				break;
 
+		case tokint:
+				HiLite(f, "INT");
+				break;
+
 			case tokkeypress:
 				HiLite(f, "KEYPRESS");
 				break;
@@ -1041,6 +1073,14 @@ void ListTokens(FILE *f, tokenrec *buf)
 				HiLite(f, "INPUTBOX$");
 				break;
 
+			case tokokcancel:
+				HiLite(f, "OK_CANCEL ");
+				break;
+
+			case tokyncancel:
+				HiLite(f, "YN_CANCEL");
+				break;
+
 			case tokremove_:
 				HiLite(f, "REMOVE$");
 				break;
@@ -1055,6 +1095,10 @@ void ListTokens(FILE *f, tokenrec *buf)
 
 			case tokpi:
 				HiLite(f, "PI");
+				break;
+
+		    case tokcrlf_:
+				HiLite(f, "CRLF$");
 				break;
 
 			case toktrue:
@@ -1126,7 +1170,7 @@ void ListTokens(FILE *f, tokenrec *buf)
 				break;
 
 			case tokgoto:
-				HiLite(f, "GOTO ");
+				HiLite(f, " GOTO ");
 				break;
 
 			case tokif:
@@ -1222,6 +1266,10 @@ void ListTokens(FILE *f, tokenrec *buf)
 
 			case tokcls:
 				HiLite(f, "CLS");
+				break;
+
+			case tokclear:
+				HiLite(f, "CLEAR");
 				break;
 
 			case tokopen:
@@ -1705,6 +1753,11 @@ valrec factor(struct LOC_exec *LINK)
 			n.val = (n.val > 0) - (n.val < 0);
 			break;
 
+		case tokint:
+			n.val = realfactor(LINK);
+			n.val = floor(n.val);
+			break;
+
 		case toklike:
 			RequireToken(toklp, LINK);
 			n.sval = strexpr(LINK);
@@ -1782,6 +1835,13 @@ valrec factor(struct LOC_exec *LINK)
 			n.sval = (char *)calloc(MAXSTRINGVAR, 1);
 			strcpy(n.sval, inkey());
 			break;
+
+		case tokcrlf_:
+			n.IsStringVal = TRUE;
+			n.sval = (char *)calloc(5, 1);
+			strcpy(n.sval, crlf());
+			break;
+
 
 		case tokdate_:
 			n.IsStringVal = TRUE;
@@ -1983,6 +2043,17 @@ valrec factor(struct LOC_exec *LINK)
 			n.IsStringVal = TRUE;
 			n.sval = strexpr(LINK);
 			strcpy(n.sval, InputBox(Tmp1, Tmp2, n.sval));
+			RequireToken(tokrp, LINK);
+			break;
+
+		case tokyncancel:                    
+			n.IsStringVal = FALSE;
+			RequireToken(toklp, LINK);
+			n.sval = strexpr(LINK);
+			strcpy(Tmp1, n.sval);
+			RequireToken(tokcomma, LINK);
+			n.sval = strexpr(LINK);
+			n.val = YN_CANCEL(Tmp1, n.sval);
 			RequireToken(tokrp, LINK);
 			break;
 
@@ -2351,6 +2422,27 @@ void cmdnew(struct LOC_exec *LINK)
 	color(14, 1);
 	cls();
 	//**************
+}
+
+//*****************************************************************************
+
+
+void cmdokcancel(struct LOC_exec *LINK)
+{
+	char *Title;
+    char *Message;
+
+	Title = (char *)calloc(MAXSTRINGVAR, 1);
+	Message = (char *)calloc(MAXSTRINGVAR, 1);
+
+	Title = strexpr(LINK);
+	RequireToken(tokcomma, LINK);
+	Message = strexpr(LINK);
+
+	OK_CANCEL(Title, Message);
+	free(Title);
+	free(Message);
+
 }
 
 //*****************************************************************************
@@ -3793,7 +3885,8 @@ void cmddim(struct LOC_exec *LINK)
 
 		LINK->Token = LINK->Token->next;
 		v->numdims = i;
-		if (v->IsStringVar)
+
+		if (v->IsStringVar)  // example: DIM A$(100) will create an array of NULL 32-bit pointers
 		{
 			v->sarr = (char **)calloc(j * 4, 1);
 			for (i = 0; i < j; i++)
@@ -3853,6 +3946,14 @@ void Execute(void)
 				{
 					case tokrem:
 						/* blank case */
+						break;
+
+					case tokokcancel:
+						cmdokcancel(&V);
+						break;
+
+					case tokclear:
+						ClearAll();
 						break;
 
 					case tokcls:
@@ -4675,6 +4776,43 @@ LRESULT CALLBACK SBProc(int Msg, WPARAM wParam, LPARAM lParam)
 
 //****************************************************************
 
+void OK_CANCEL (char *Title, char *Message)
+{
+  MessageBox(GetActiveWindow(),Message,Title,1);
+}
+
+//****************************************************************
+
+
+int YN_CANCEL (char *Title, char *Message)
+{
+  int a=0;
+  int b=0;
+
+  a=MessageBox(GetActiveWindow(),Message,Title,3);
+  for(;;)
+  {
+    if(a==2)
+      {
+        b=3;
+        break;
+      }
+    if(a==6)
+      {
+        b=1;
+        break;
+      }
+    if(a==7)
+      {
+        b=2;
+      }
+    break;
+  }
+  return b;
+}
+
+//****************************************************************
+
 char *InputBox(char *Title, char *Prompt, char *Value)
 {
 	char *BCX_RetStr;
@@ -5457,6 +5595,8 @@ int IsNumber(char *a)
 	}
 	return TRUE;
 }
+//****************************************************************
+
 
 void Setup_Console()
 {
@@ -5476,11 +5616,11 @@ void TextMode(int Y)
 	SMALL_RECT sr;
 	COORD Coord;
 	Coord.X = 80;	// Buffer columns
-	Coord.Y = 80;	// Buffer rows
+	Coord.Y = 800;	// Buffer rows
 	sr.Top = 1;	// screen position  
 	sr.Left = 1;	// screen position 
 	sr.Right = 80;	// screen position
-	sr.Bottom = Y;	// screen position
+	sr.Bottom = 43;	// screen position
 	SetConsoleScreenBufferSize(hConsole, Coord);
 	SetConsoleWindowInfo(hConsole, TRUE, &sr);
 	color(14, 1);
@@ -5558,4 +5698,15 @@ void swap(byte *A, byte *B, int length)
 		*(A++) = *B;
 		*(B++) = t;
 	}
+}
+
+//****************************************************************
+
+char *crlf(void)
+{
+  char*stmp = calloc(3,1);
+  stmp[0]=13;
+  stmp[1]=10;
+  stmp[2]= 0;
+  return stmp;
 }
