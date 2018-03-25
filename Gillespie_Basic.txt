@@ -1,11 +1,12 @@
 *******************************************************************************
-
+				  GILLESPIE BASIC
+				  
                   Bug Fixes, Modifications, and Enhancements To 
                            	Chipmunk BASIC (1.0)
 			  	   for MS-Windows 
                             By Kevin Diggins (2018)
 
-	      This runs on 32 and 64 bit Windows systems equally well )
+	      This runs on 32-bit and 64-bit Windows systems equally well
 
 *******************************************************************************
 * At startup, a Windows OpenFileName dialog box will open for loading a program.
@@ -151,11 +152,9 @@ CRLF$ ....... produces the same thing as CHR$(13)+CHR$(10) but less typing
 
 * Added A$ = FINDNEXT$
 
+------------------------ More Functions added to CHIPMUNK 1.0 ---------------------------
 
-
---------- Additional Functions added to CHIPMUNK 1.0 by Kevin Diggins  -----------------
-
-* Added INT function           ' how was this missing?  :-)
+* Added INT function           ' how was this missing from Chipmunk 1.0?    :-)
 
 * Added MyNum = RND            ' returns a random number between 0 and 1
 
