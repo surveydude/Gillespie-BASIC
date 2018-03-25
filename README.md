@@ -8,15 +8,7 @@ Improving Gillespie Basic is a part-time recreational hobby for me but one that 
 
 I enjoy using Pelles C as my compiler system - certainly other compilers will work with minimal fuss.  But please understand that Gillespie Basic makes many calls to the Win32 API, so porting this source code to other platforms will require more effort.  All that being said, I feel Gillespie Basic strikes a nice blend of cool vintage look and feel while enjoying some benefits of running natively on a 32-bit or 64-bit version of Windows.  My development PC is running Windows 10 Pro 64-bit but I'm compiling for 32-bit.
 
-There is (1) header file, (1) "C" source file, and (1) small (117kb) executable.  I've also uploaded a bunch of sample files that were used during testing that will be instructional.  Also read the Gillespie Basic text file for the new functions and keywords that I've added to the interpreter.
+There is (1) header file, (1) "C" source file, and (1) small (117kb) executable.  I've also uploaded a bunch of sample files that were used during testing that are also instructional.  Also read the Gillespie Basic text file for the new functions and keywords that I've added to the interpreter.
 
-FUTURE IMPROVEMENTS ???
 
-I'd like to add: 
-
-    * multi-line IF-THEN-ELSE-END IF
-    * text labels ( for goto / gosub )
-    * user defined FUNCTIONS/SUBS
-    * SELECT CASE
-    
 If there is any interest, I may post updates.
