@@ -1,10 +1,9 @@
 //*****************************************************************************
-#define VERSION "Gillespie BASIC v1.53 for Windows by Kevin Diggins (2018)\n"
+#define VERSION "Gillespie BASIC v1.54 for Windows by Kevin Diggins (2018)\n"
 //              Based on Chipmunk Basic 1.0 by Dave Gillespie 
 //*****************************************************************************
 
 #include "Basic.h"
-
 
 void Initialize()
 {
@@ -14,22 +13,21 @@ void Initialize()
 	varbase = 0;
 	loopbase = 0;
 	exitflag = FALSE;
-    Dirtyflag = FALSE;
-    ClearAll();
+	Dirtyflag = FALSE;
+	ClearAll();
 }
-
-
 
 int main(int argc, char *argv[])
 {
+//****************************** 
 	Top_of_Jump_Buffer = NULL;
 //****************************** 
-    Initialize();
+	Initialize();
 //****************************** 
 	Setup_Console();
 //****************************** 
-
 	printf(VERSION);
+//****************************** 
 	do
 	{
 		if (!Dirtyflag)
@@ -40,10 +38,11 @@ int main(int argc, char *argv[])
 		else
 		{
 			printf("\n%s", "Ready: ");
-			gets(inbuf);
+			fgets(inbuf, MAXSTRINGVAR, stdin);   
 		}
+
 		//********************************************************************
-		//  This allows us to invoke the Windows GetFileName dialogbox
+		//    This allows us to invoke the Windows GetFileName dialogbox
 		//********************************************************************
 		if (stricmp(inbuf, "load") == 0)
 			strcpy(inbuf, join(2, "load ", enc("")));
@@ -51,7 +50,7 @@ int main(int argc, char *argv[])
 
 		ParseInput(&buf);	// buf is a tokenrec ptr
 
-		if (curline == 0)
+		if (curline == 0)	// if true, then we typed an IMMEDIATE mode command
 		{
 			stmtline = NULL;	// stmtline is a global linerec ptr
 			stmttok = buf;	// stmttok is a global tokenrec ptr
@@ -70,23 +69,18 @@ int main(int argc, char *argv[])
 void ParseInput(tokenrec **buf)
 {
 	linerec *L1, *L2, *L3;
-	char Str1[2048] = { 0 };
-
-	strcpy(Str1, trim(inbuf));
-	strcpy(inbuf, Str1);
 	curline = 0;
-
+	strcpy(inbuf, trim(inbuf));
 	while (*inbuf != '\0' && isdigit(inbuf[0]))
 	{
-		curline = curline * 10 + inbuf[0] - 48;
+		curline = curline * 10 + inbuf[0] - 48;	// parse the line number
 		strcpy(inbuf, inbuf + 1);
 	}
 
 //*****************************************************************************
-//   curline contains our line number (or Chipmunk's version of it)
-//   inbuf contains the line of code without the line number
+//   curline contains the current line number 
+//   inbuf contains the current line of code (LOC) -without- the line number
 //*****************************************************************************
-
 	Parse(inbuf, buf);
 
 	if (curline == 0)
@@ -185,7 +179,6 @@ void Parse(char *inbuf, tokenrec **buf)
 					i = strlen(inbuf) + 1;
 					break;
 //**************************************************************************************
-
 				case '+':
 					t->kind = tokplus;
 					break;
@@ -432,7 +425,7 @@ void Parse(char *inbuf, tokenrec **buf)
 							t->kind = tokfalse;
 						else if (!stricmp(token, "pi"))
 							t->kind = tokpi;
-                        else if (!stricmp(token, "crlf$"))
+						else if (!stricmp(token, "crlf$"))
 							t->kind = tokcrlf_;
 						else if (!stricmp(token, "eof"))
 							t->kind = tokeof;
@@ -545,7 +538,7 @@ void Parse(char *inbuf, tokenrec **buf)
 						{
 							t->kind = tokvar;
 							v = varbase;
-							while (v != NULL && stricmp(v->name, token))	//Case Insensitive Var
+							while (v != NULL && stricmp(v->name, token))	//Case Insensitive variables
 								v = v->next;
 							if (v == NULL)
 							{
@@ -557,14 +550,14 @@ void Parse(char *inbuf, tokenrec **buf)
 								if (token[strlen(token) - 1] == '$')
 								{
 									v->IsStringVar = TRUE;
-									v->sv = NULL;
-									v->sval = &v->sv;
+									v->StringVar = NULL;
+									v->AddressOfStringVar = &v->StringVar;
 								}
 								else
 								{
 									v->IsStringVar = FALSE;
-									v->rv = 0.0;
-									v->val = &v->rv;
+									v->DoubleVar = 0.0;
+									v->AddressOfDoubleVar = &v->DoubleVar;
 								}
 							}
 							t->vp = v;
@@ -654,6 +647,25 @@ void ClearLoops(void)
 		loopbase = l;
 	}
 }
+//*****************************************************************************
+
+void FreeStringArrays(struct varrec *varbase)
+{
+	int i, k;
+	if (varbase->numdims > 0)
+	{
+		k = 1;
+		for (i = 0; i < varbase->numdims; i++)
+		{
+			k = k * (varbase->dims[i]);
+		}
+		for (i = 0; i < k; i++)
+		{
+			free(varbase->sarr[i]);
+		}
+		free(varbase->sarr);
+	}
+}
 
 //*****************************************************************************
 
@@ -670,44 +682,23 @@ void ClearVars()
 		if (v->numdims != 0 && v->IsStringVar == TRUE)
 			FreeStringArrays(v);
 
-		if (v->sv != NULL && v->IsStringVar == TRUE)
-			free(v->sv);
+		if (v->StringVar != NULL && v->IsStringVar == TRUE)
+			free(v->StringVar);
 
 		v->numdims = 0;
 
 		if (v->IsStringVar)
 		{
-			v->sv = NULL;
-			v->sval = &v->sv;
+			v->StringVar = NULL;
+			v->AddressOfStringVar = &v->StringVar;
 		}
 		else
 		{
-			v->rv = 0.0;
-			v->val = &v->rv;
+			v->DoubleVar = 0.0;
+			v->AddressOfDoubleVar = &v->DoubleVar;
 		}
 		v = v->next;
 	}
-}
-
-//*****************************************************************************
-
-int FreeStringArrays(struct varrec *varbase)
-{
-	int i, k;
-	if (varbase->numdims > 0)
-	{
-		k = 1;
-		for (i = 0; i < varbase->numdims; i++)
-		{
-			k = k * (varbase->dims[i]);
-		}
-		for (i = 0; i < k; i++)
-		{
-			free(varbase->sarr[i]);
-		}
-		free(varbase->sarr);
-	}
-	return (1);
 }
 
 //*****************************************************************************
@@ -782,7 +773,9 @@ void ListTokens(FILE *f, tokenrec *buf)
 				break;
 
 			case toknum:
+				color(15, 1);
 				fputs(NumToStr(Str1, buf->num), f);
+				color(14, 1);
 				break;
 
 			case tokstr:
@@ -905,7 +898,7 @@ void ListTokens(FILE *f, tokenrec *buf)
 				HiLite(f, "SGN");
 				break;
 
-		case tokint:
+			case tokint:
 				HiLite(f, "INT");
 				break;
 
@@ -1097,7 +1090,7 @@ void ListTokens(FILE *f, tokenrec *buf)
 				HiLite(f, "PI");
 				break;
 
-		    case tokcrlf_:
+			case tokcrlf_:
 				HiLite(f, "CRLF$");
 				break;
 
@@ -1338,7 +1331,7 @@ void ListTokens(FILE *f, tokenrec *buf)
 				break;
 
 			case tokrem:
-				color(15, 1);
+				color(11, 1);
 				fprintf(f, "'%s", buf->sp);	// All REM's become single quotes
 				color(14, 1);
 				break;
@@ -1362,20 +1355,18 @@ void HiLite(FILE *f, char *KW)
 
 //*****************************************************************************
 
-void DisposeTokens(tokenrec **tok)
+void DisposeTokens(tokenrec **tok1)
 {
-	tokenrec *tok1;
-	while (*tok != NULL)
+	tokenrec *tok2;
+	while (*tok1 != NULL)
 	{
-		tok1 = (*tok)->next;
-		if ((*tok)->kind == tokrem || (*tok)->kind == tokstr)
-			free((*tok)->sp);
-		free(*tok);
-		*tok = tok1;
+		tok2 = (*tok1)->next;
+		if ((*tok1)->kind == tokrem || (*tok1)->kind == tokstr)
+			free((*tok1)->sp);
+		free(*tok1);
+		*tok1 = tok2;
 	}
 }
-
-//*****************************************************************************
 
 //*****************************************************************************
 
@@ -1408,7 +1399,7 @@ void BadSubScript()
 
 //*****************************************************************************
 
-double realfactor(struct LOC_exec *LINK)
+double Doublefactor(struct LOC_exec *LINK)
 {
 	valrec n;
 	n = factor(LINK);
@@ -1430,30 +1421,30 @@ char *strfactor(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-long intfactor(struct LOC_exec *LINK)	//look at ROUND() for example
+long intfactor(struct LOC_exec *LINK)
 {
-	return ((long)floor(realfactor(LINK) + 0.5));
+	return ((long)floor(Doublefactor(LINK) + 0.5));
 }
 
 //*****************************************************************************
 
-double realexpr(struct LOC_exec *LINK)	//look at ROUND () for example
+double DoubleExpression(struct LOC_exec *LINK)
 {
 	valrec n;
-	n = expr(LINK);
+	n = Expression(LINK);
 	if (n.IsStringVal)
 		MismatchError();
 	return (n.val);
 }
 
 //*****************************************************************************
-// grabs the next valid string expression
+//                    grabs the next valid string expression
 //*****************************************************************************
 
-char *strexpr(struct LOC_exec *LINK)
+char *StringExpression(struct LOC_exec *LINK)
 {
 	valrec n;
-	n = expr(LINK);
+	n = Expression(LINK);
 	if (!n.IsStringVal)
 		MismatchError();
 	return (n.sval);
@@ -1463,10 +1454,10 @@ char *strexpr(struct LOC_exec *LINK)
 //             Store the next valid string expression into Result
 //*****************************************************************************
 
-char *stringexpr(char *Result, struct LOC_exec *LINK)
+char *StringExpressionEx(char *Result, struct LOC_exec *LINK)
 {
 	valrec n;
-	n = expr(LINK);
+	n = Expression(LINK);
 	if (!n.IsStringVal)
 		MismatchError();
 	strcpy(Result, n.sval);
@@ -1476,9 +1467,9 @@ char *stringexpr(char *Result, struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-long intexpr(struct LOC_exec *LINK)
+long IntegerExpression(struct LOC_exec *LINK)
 {
-	return ((long)floor(realexpr(LINK) + 0.5));
+	return ((long)floor(DoubleExpression(LINK) + 0.5));
 }
 
 //*****************************************************************************
@@ -1578,7 +1569,7 @@ varrec *findvar(struct LOC_exec *LINK)
 
 	for (i = 1; i <= FORLIM; i++)
 	{
-		j = intexpr(LINK);
+		j = IntegerExpression(LINK);
 		if ((unsigned long)j >= v->dims[i - 1])
 			BadSubScript();
 		k = k * v->dims[i - 1] + j;
@@ -1589,9 +1580,9 @@ varrec *findvar(struct LOC_exec *LINK)
 	RequireToken(tokrp, LINK);
 
 	if (v->IsStringVar)
-		v->sval = &v->sarr[k];	// everytime a scalar variable is found ANYWHERE
+		v->AddressOfStringVar = &v->sarr[k];	// everytime a scalar variable is found ANYWHERE
 	else
-		v->val = &v->arr[k];	// everytime an array variable is found ANYWHERE
+		v->AddressOfDoubleVar = &v->arr[k];	// everytime an array variable is found ANYWHERE
 	return v;
 }
 
@@ -1651,9 +1642,9 @@ valrec factor(struct LOC_exec *LINK)
 				//  crashes when a$ had not been used earlier in a program
 				//***************************************************************
 
-				if (*v->sval != NULL)	// Null Ptr Test
+				if (*v->AddressOfStringVar != NULL)	// Null Ptr Test
 				{
-					strcpy(n.sval, *v->sval);	// Not a Null Ptr
+					strcpy(n.sval, *v->AddressOfStringVar);	// Not a Null Ptr
 				}
 				else
 				{
@@ -1661,20 +1652,20 @@ valrec factor(struct LOC_exec *LINK)
 				}
 			}
 			else
-				n.val = *v->val;
+				n.val = *v->AddressOfDoubleVar;
 			break;
 
 		case toklp:
-			n = expr(LINK);
+			n = Expression(LINK);
 			RequireToken(tokrp, LINK);
 			break;
 
 		case tokminus:
-			n.val = -realfactor(LINK);
+			n.val = -Doublefactor(LINK);
 			break;
 
 		case tokplus:
-			n.val = realfactor(LINK);
+			n.val = Doublefactor(LINK);
 			break;
 
 //*****************************************************************************
@@ -1686,7 +1677,7 @@ valrec factor(struct LOC_exec *LINK)
 			break;
 
 		case toktimer:
-			n.val = (float)GetTickCount() / 1000.0;
+			n.val = (float)GetTickCount() * 0.001;
 			break;
 
 		case tokrnd:
@@ -1698,89 +1689,89 @@ valrec factor(struct LOC_exec *LINK)
 			break;
 
 		case toksqr:
-			TmpDouble = realfactor(LINK);
+			TmpDouble = Doublefactor(LINK);
 			n.val = TmpDouble * TmpDouble;
 			break;
 
 		case toksqrt:
-			n.val = sqrt(realfactor(LINK));
+			n.val = sqrt(Doublefactor(LINK));
 			break;
 
 		case tokround:
 			RequireToken(toklp, LINK);
-			n.val = realexpr(LINK);
+			n.val = DoubleExpression(LINK);
 			RequireToken(tokcomma, LINK);
-			i = intexpr(LINK);
+			i = IntegerExpression(LINK);
 			n.val = Round(n.val, i);
 			RequireToken(tokrp, LINK);
 			break;
 
 		case toksin:
-			n.val = sin(realfactor(LINK));
+			n.val = sin(Doublefactor(LINK));
 			break;
 
 		case tokcos:
-			n.val = cos(realfactor(LINK));
+			n.val = cos(Doublefactor(LINK));
 			break;
 
 		case toktan:
-			n.val = realfactor(LINK);
+			n.val = Doublefactor(LINK);
 			n.val = sin(n.val) / cos(n.val);
 			break;
 
 		case tokatan:
-			n.val = atan(realfactor(LINK));
+			n.val = atan(Doublefactor(LINK));
 			break;
 
 		case toklog10:
-			n.val = log10(realfactor(LINK));
+			n.val = log10(Doublefactor(LINK));
 			break;
 
 		case toklog:
-			n.val = log(realfactor(LINK));
+			n.val = log(Doublefactor(LINK));
 			break;
 
 		case tokexp:
-			n.val = exp(realfactor(LINK));
+			n.val = exp(Doublefactor(LINK));
 			break;
 
 		case tokabs:
-			n.val = fabs(realfactor(LINK));
+			n.val = fabs(Doublefactor(LINK));
 			break;
 
 		case toksgn:
-			n.val = realfactor(LINK);
+			n.val = Doublefactor(LINK);
 			n.val = (n.val > 0) - (n.val < 0);
 			break;
 
 		case tokint:
-			n.val = realfactor(LINK);
+			n.val = Doublefactor(LINK);
 			n.val = floor(n.val);
 			break;
 
 		case toklike:
 			RequireToken(toklp, LINK);
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(Tmp1, n.sval);
 			RequireToken(tokcomma, LINK);
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			n.val = like(Tmp1, n.sval);
 			RequireToken(tokrp, LINK);
 			break;
 
 		case tokverify:
 			RequireToken(toklp, LINK);
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(Tmp1, n.sval);
 			RequireToken(tokcomma, LINK);
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			n.val = Verify(Tmp1, n.sval);
 			RequireToken(tokrp, LINK);
 			break;
 
 		case tokexist:
 			RequireToken(toklp, LINK);
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			n.val = Exist(n.sval);
 			RequireToken(tokrp, LINK);
 			break;
@@ -1789,7 +1780,7 @@ valrec factor(struct LOC_exec *LINK)
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
 			n.sval = (char *)calloc(MAXSTRINGVAR, 1);
-			NumToStr(n.sval, realfactor(LINK));
+			NumToStr(n.sval, Doublefactor(LINK));
 			RequireToken(tokrp, LINK);
 			break;
 
@@ -1803,14 +1794,14 @@ valrec factor(struct LOC_exec *LINK)
 
 		case tokval:
 			RequireToken(toklp, LINK);
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			n.val = (double)atof(n.sval);
 			RequireToken(tokrp, LINK);
 			break;
 
 		case toklof:
 			RequireToken(toklp, LINK);
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			n.val = lof(n.sval);
 			RequireToken(tokrp, LINK);
 			break;
@@ -1841,7 +1832,6 @@ valrec factor(struct LOC_exec *LINK)
 			n.sval = (char *)calloc(5, 1);
 			strcpy(n.sval, crlf());
 			break;
-
 
 		case tokdate_:
 			n.IsStringVal = TRUE;
@@ -1876,7 +1866,7 @@ valrec factor(struct LOC_exec *LINK)
 		case toktrim_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(n.sval, trim(n.sval));
 			RequireToken(tokrp, LINK);
 			break;
@@ -1884,7 +1874,7 @@ valrec factor(struct LOC_exec *LINK)
 		case tokltrim_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(n.sval, ltrim(n.sval));
 			RequireToken(tokrp, LINK);
 			break;
@@ -1892,7 +1882,7 @@ valrec factor(struct LOC_exec *LINK)
 		case tokrtrim_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(n.sval, rtrim(n.sval));
 			RequireToken(tokrp, LINK);
 			break;
@@ -1900,7 +1890,7 @@ valrec factor(struct LOC_exec *LINK)
 		case tokucase_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(n.sval, ucase(n.sval));
 			RequireToken(tokrp, LINK);
 			break;
@@ -1908,7 +1898,7 @@ valrec factor(struct LOC_exec *LINK)
 		case tokfindfirst_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(n.sval, findfirst(n.sval));
 			RequireToken(tokrp, LINK);
 			break;
@@ -1922,7 +1912,7 @@ valrec factor(struct LOC_exec *LINK)
 		case toklcase_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(n.sval, lcase(n.sval));
 			RequireToken(tokrp, LINK);
 			break;
@@ -1930,7 +1920,7 @@ valrec factor(struct LOC_exec *LINK)
 		case tokmcase_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(n.sval, mcase(n.sval));
 			RequireToken(tokrp, LINK);
 			break;
@@ -1939,7 +1929,7 @@ valrec factor(struct LOC_exec *LINK)
 			n.IsStringVal = TRUE;
 			n.sval = (char *)calloc(MAXSTRINGVAR, 1);
 			RequireToken(toklp, LINK);
-			i = intexpr(LINK);
+			i = IntegerExpression(LINK);
 			if (i < 1)
 				i = 1;
 			strcpy(n.sval, space(i));
@@ -1949,9 +1939,9 @@ valrec factor(struct LOC_exec *LINK)
 		case tokleft_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			RequireToken(tokcomma, LINK);
-			i = intexpr(LINK);
+			i = IntegerExpression(LINK);
 			if (i < 1)
 				i = 1;
 			strcpy(n.sval, left(n.sval, i));
@@ -1961,9 +1951,9 @@ valrec factor(struct LOC_exec *LINK)
 		case tokusing_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			RequireToken(tokcomma, LINK);
-			TmpDouble = realexpr(LINK);
+			TmpDouble = DoubleExpression(LINK);
 			RequireToken(tokrp, LINK);
 			strcpy(n.sval, Using(n.sval, TmpDouble));
 			break;
@@ -1971,9 +1961,9 @@ valrec factor(struct LOC_exec *LINK)
 		case tokright_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			RequireToken(tokcomma, LINK);
-			i = intexpr(LINK);
+			i = IntegerExpression(LINK);
 			if (i < 1)
 				i = 1;
 			strcpy(n.sval, right(n.sval, i));
@@ -1983,9 +1973,9 @@ valrec factor(struct LOC_exec *LINK)
 		case tokrepeat_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			RequireToken(tokcomma, LINK);
-			i = intexpr(LINK);
+			i = IntegerExpression(LINK);
 			if (i < 1)
 				i = 1;
 			strcpy(n.sval, repeat(n.sval, i));
@@ -1995,21 +1985,21 @@ valrec factor(struct LOC_exec *LINK)
 		case tokextract_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(Tmp1, n.sval);
 			RequireToken(tokcomma, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(n.sval, extract(Tmp1, n.sval));
 			RequireToken(tokrp, LINK);
 			break;
 
 		case tokinstr:
 			RequireToken(toklp, LINK);
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(Tmp1, n.sval);
 			RequireToken(tokcomma, LINK);
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			RequireToken(tokrp, LINK);
 			n.val = instr(Tmp1, n.sval);
 			break;
@@ -2017,15 +2007,15 @@ valrec factor(struct LOC_exec *LINK)
 		case tokireplace_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(Tmp1, n.sval);
 			RequireToken(tokcomma, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(Tmp2, n.sval);
 			RequireToken(tokcomma, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(n.sval, iReplace(Tmp1, Tmp2, n.sval));
 			RequireToken(tokrp, LINK);
 			break;
@@ -2033,26 +2023,26 @@ valrec factor(struct LOC_exec *LINK)
 		case tokinputbox:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(Tmp1, n.sval);
 			RequireToken(tokcomma, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(Tmp2, n.sval);
 			RequireToken(tokcomma, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(n.sval, InputBox(Tmp1, Tmp2, n.sval));
 			RequireToken(tokrp, LINK);
 			break;
 
-		case tokyncancel:                    
+		case tokyncancel:
 			n.IsStringVal = FALSE;
 			RequireToken(toklp, LINK);
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(Tmp1, n.sval);
 			RequireToken(tokcomma, LINK);
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			n.val = YN_CANCEL(Tmp1, n.sval);
 			RequireToken(tokrp, LINK);
 			break;
@@ -2060,7 +2050,7 @@ valrec factor(struct LOC_exec *LINK)
 		case tokenc_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			RequireToken(tokrp, LINK);
 			strcpy(n.sval, enc(n.sval));
 			break;
@@ -2068,11 +2058,11 @@ valrec factor(struct LOC_exec *LINK)
 		case tokremain_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(Tmp1, n.sval);
 			RequireToken(tokcomma, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(n.sval, remain(Tmp1, n.sval));
 			RequireToken(tokrp, LINK);
 			break;
@@ -2080,11 +2070,11 @@ valrec factor(struct LOC_exec *LINK)
 		case tokremove_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(Tmp1, n.sval);
 			RequireToken(tokcomma, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			strcpy(n.sval, RemoveStr(Tmp1, n.sval));
 			RequireToken(tokrp, LINK);
 			break;
@@ -2102,10 +2092,10 @@ valrec factor(struct LOC_exec *LINK)
 		case tokmid_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
-			n.sval = strexpr(LINK);
+			n.sval = StringExpression(LINK);
 			RequireToken(tokcomma, LINK);
 
-			i = intexpr(LINK);
+			i = IntegerExpression(LINK);
 
 			if (i < 1)
 				i = 1;
@@ -2115,7 +2105,7 @@ valrec factor(struct LOC_exec *LINK)
 			if (LINK->Token != NULL && LINK->Token->kind == tokcomma)
 			{
 				LINK->Token = LINK->Token->next;
-				j = intexpr(LINK);
+				j = IntegerExpression(LINK);
 			}
 
 			if (j > strlen(n.sval) - i + 1)
@@ -2310,7 +2300,7 @@ valrec andexpr(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-valrec expr(struct LOC_exec *LINK)
+valrec Expression(struct LOC_exec *LINK)
 {
 	valrec n, n2;
 	long k;
@@ -2357,24 +2347,16 @@ void skiptoeos(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-linerec *findline(long n)
+linerec *FindTargetLineNumber(long n)
 {
 	linerec *l;
+
 	l = linebase;
 	while (l != NULL && l->num != n)
-		// Could this be changed to look for TEXT label instead?
 		l = l->next;
-	return l;
-}
 
-//*****************************************************************************
-
-linerec *mustfindline(long n)
-{
-	linerec *l;
-	l = findline(n);
 	if (l == NULL)
-		Abort("Undefined line");
+		Abort("Missing goto/gosub target");
 	return l;
 }
 
@@ -2410,8 +2392,8 @@ void cmdnew(struct LOC_exec *LINK)
 		p = (LPVOID)varbase->next;
 		if (varbase->IsStringVar)
 		{
-			if (*varbase->sval != NULL)
-				free(*varbase->sval);
+			if (*varbase->AddressOfStringVar != NULL)
+				free(*varbase->AddressOfStringVar);
 		}
 		free(varbase);
 		varbase = (varrec *)p;
@@ -2426,18 +2408,17 @@ void cmdnew(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-
 void cmdokcancel(struct LOC_exec *LINK)
 {
 	char *Title;
-    char *Message;
+	char *Message;
 
 	Title = (char *)calloc(MAXSTRINGVAR, 1);
 	Message = (char *)calloc(MAXSTRINGVAR, 1);
 
-	Title = strexpr(LINK);
+	Title = StringExpression(LINK);
 	RequireToken(tokcomma, LINK);
-	Message = strexpr(LINK);
+	Message = StringExpression(LINK);
 
 	OK_CANCEL(Title, Message);
 	free(Title);
@@ -2516,22 +2497,22 @@ void cmdrun(struct LOC_exec *LINK)
 	if (!IsEndOfStatement(LINK))
 	{
 		if (LINK->Token->kind == toknum)
-			l = mustfindline(intexpr(LINK));
+			l = FindTargetLineNumber(IntegerExpression(LINK));
 		else
 		{
-			stringexpr(s, LINK);
+			StringExpressionEx(s, LINK);
 			i = 0;
 			if (!IsEndOfStatement(LINK))
 			{
 				RequireToken(tokcomma, LINK);
-				i = intexpr(LINK);
+				i = IntegerExpression(LINK);
 			}
 			checkextra(LINK);
 			cmdload(FALSE, s, LINK);
 			if (i == 0)
 				l = linebase;
 			else
-				l = mustfindline(i);
+				l = FindTargetLineNumber(i);
 		}
 	}
 	stmtline = l;
@@ -2634,7 +2615,7 @@ void cmdsave(struct LOC_exec *LINK)
 	if (strlen(OurLoadedFname) > 0)
 		strcpy(Str2, OurLoadedFname);
 	else
-		sprintf(Str2, "%s.Bas", stringexpr(Str1, LINK));
+		sprintf(Str2, "%s.Bas", StringExpressionEx(Str1, LINK));
 
 	strcpy(OurLoadedFname, Str2);
 
@@ -2751,11 +2732,11 @@ void cmdrenum(struct LOC_exec *LINK)
 	step = 10;
 	if (!IsEndOfStatement(LINK))
 	{
-		lnum = intexpr(LINK);
+		lnum = IntegerExpression(LINK);
 		if (!IsEndOfStatement(LINK))
 		{
 			RequireToken(tokcomma, LINK);
-			step = intexpr(LINK);
+			step = IntegerExpression(LINK);
 		}
 	}
 	l = linebase;
@@ -2821,7 +2802,7 @@ void cmdprint(struct LOC_exec *LINK)
 			LINK->Token = LINK->Token->next;
 			continue;
 		}
-		n = expr(LINK);
+		n = Expression(LINK);
 		if (n.IsStringVal)
 		{
 			fputs(n.sval, stdout);
@@ -2838,7 +2819,7 @@ void cmdprint(struct LOC_exec *LINK)
 void cmdsleep(struct LOC_exec *LINK)
 {
 	DWORD milliseconds;
-	milliseconds = intexpr(LINK);
+	milliseconds = IntegerExpression(LINK);
 	Sleep(milliseconds);
 }
 
@@ -2847,7 +2828,7 @@ void cmdsleep(struct LOC_exec *LINK)
 void cmdtextmode(struct LOC_exec *LINK)
 {
 	long textlines;
-	textlines = intexpr(LINK);
+	textlines = IntegerExpression(LINK);
 	TextMode(textlines);
 }
 //*****************************************************************************
@@ -2855,7 +2836,7 @@ void cmdtextmode(struct LOC_exec *LINK)
 void cmdrandomize(struct LOC_exec *LINK)
 {
 	long seed;
-	seed = intexpr(LINK);
+	seed = IntegerExpression(LINK);
 	srand(seed);
 }
 //*****************************************************************************
@@ -2863,7 +2844,7 @@ void cmdrandomize(struct LOC_exec *LINK)
 void cmdsetcursor(struct LOC_exec *LINK)
 {
 	int showhide;
-	showhide = intexpr(LINK);
+	showhide = IntegerExpression(LINK);
 	Cursorsh(showhide);
 }
 
@@ -2873,7 +2854,7 @@ void cmdclose(struct LOC_exec *LINK)
 {
 	FILE *FileNumber;
 	int ioNumber;
-	ioNumber = intexpr(LINK);
+	ioNumber = IntegerExpression(LINK);
 	FileNumber = GetFilePtr(ioNumber);
 	fflush(FileNumber);
 	fclose(FileNumber);
@@ -2886,7 +2867,7 @@ void cmdrewind(struct LOC_exec *LINK)
 {
 	FILE *FileNumber;
 	int ioNumber;
-	ioNumber = intexpr(LINK);
+	ioNumber = IntegerExpression(LINK);
 	FileNumber = GetFilePtr(ioNumber);
 	rewind(FileNumber);
 }
@@ -2901,7 +2882,7 @@ void cmdfprint(struct LOC_exec *LINK)
 	char Str1[2048] = { 0 };
 	semiflag = FALSE;
 
-	Channel = GetFilePtr(intexpr(LINK));
+	Channel = GetFilePtr(IntegerExpression(LINK));
 	RequireToken(tokcomma, LINK);
 
 	while (!IsEndOfStatement(LINK))
@@ -2914,7 +2895,7 @@ void cmdfprint(struct LOC_exec *LINK)
 			continue;
 		}
 
-		n = expr(LINK);
+		n = Expression(LINK);
 		if (n.IsStringVal)
 		{
 			fprintf(Channel, "%s ", n.sval);
@@ -2937,7 +2918,7 @@ void cmdget(struct LOC_exec *LINK)	// GET fp1,A$,numofbytes
 
 	char *s = (char *)calloc(MAXSTRINGVAR, 1);
 
-	FileNumber = GetFilePtr(intexpr(LINK));
+	FileNumber = GetFilePtr(IntegerExpression(LINK));
 
 	if (FileNumber == NULL)
 		Abort("File Not Open");
@@ -2947,14 +2928,14 @@ void cmdget(struct LOC_exec *LINK)	// GET fp1,A$,numofbytes
 	v = findvar(LINK);
 
 	RequireToken(tokcomma, LINK);
-	numbytes = intexpr(LINK);
+	numbytes = IntegerExpression(LINK);
 
 	GET(FileNumber, s, numbytes);
 
-	if (*v->sval != NULL)
-		free(*v->sval);
-	*v->sval = (char *)calloc(MAXSTRINGVAR, 1);
-	strcpy(*v->sval, s);
+	if (*v->AddressOfStringVar != NULL)
+		free(*v->AddressOfStringVar);
+	*v->AddressOfStringVar = (char *)calloc(MAXSTRINGVAR, 1);
+	strcpy(*v->AddressOfStringVar, s);
 	free(s);
 }
 
@@ -2969,7 +2950,7 @@ void cmdput(struct LOC_exec *LINK)	// PUT fp1,A$,numofbytes
 
 	char *s = (char *)calloc(MAXSTRINGVAR, 1);
 
-	FileNumber = GetFilePtr(intexpr(LINK));
+	FileNumber = GetFilePtr(IntegerExpression(LINK));
 
 	if (FileNumber == NULL)
 	{
@@ -2985,7 +2966,7 @@ void cmdput(struct LOC_exec *LINK)	// PUT fp1,A$,numofbytes
 	strcpy(s, n.sval);
 
 	RequireToken(tokcomma, LINK);
-	numbytes = intexpr(LINK);
+	numbytes = IntegerExpression(LINK);
 
 	PUT(FileNumber, s, numbytes);
 
@@ -3001,14 +2982,14 @@ void cmdseek(struct LOC_exec *LINK)	// PUT fp1,A$,numofbytes
 	FILE *FileNumber;
 	int numbytes;
 
-	FileNumber = GetFilePtr(intexpr(LINK));
+	FileNumber = GetFilePtr(IntegerExpression(LINK));
 
 	if (FileNumber == NULL)
 		Abort("File Not Open");
 
 	RequireToken(tokcomma, LINK);
 
-	numbytes = intexpr(LINK);
+	numbytes = IntegerExpression(LINK);
 
 	fseek(FileNumber, numbytes, 0);
 }
@@ -3023,7 +3004,7 @@ void cmdflineinput(struct LOC_exec *LINK)	//LINE INPUT handler
 
 	RequireToken(tokinput, LINK);	//swallow the INPUT keyword
 
-	FileNumber = GetFilePtr(intexpr(LINK));
+	FileNumber = GetFilePtr(IntegerExpression(LINK));
 
 	if (FileNumber == NULL)
 		Abort("File Not Open");
@@ -3035,10 +3016,10 @@ void cmdflineinput(struct LOC_exec *LINK)	//LINE INPUT handler
 	fgets(s, 2047, FileNumber);
 	s[strlen(s) - 2] = 0;
 
-	if (*v->sval != NULL)
-		free(*v->sval);
-	*v->sval = (char *)calloc(MAXSTRINGVAR, 1);
-	strcpy(*v->sval, s);
+	if (*v->AddressOfStringVar != NULL)
+		free(*v->AddressOfStringVar);
+	*v->AddressOfStringVar = (char *)calloc(MAXSTRINGVAR, 1);
+	strcpy(*v->AddressOfStringVar, s);
 	free(s);
 }
 
@@ -3050,7 +3031,7 @@ static void cmdopen(struct LOC_exec *LINK)
 	int FileNumber = 0;
 	int Mode = 0;
 	FileName = (char *)calloc(MAXSTRINGVAR, 1);
-	FileName = strexpr(LINK);
+	FileName = StringExpression(LINK);
 	RequireToken(tokfor, LINK);
 
 	if (LINK->Token->kind != tokinput && LINK->Token->kind != tokoutput && LINK->Token->kind != tokappend && LINK->Token->kind != tokbinary)
@@ -3059,7 +3040,7 @@ static void cmdopen(struct LOC_exec *LINK)
 	Mode = LINK->Token->kind;
 	LINK->Token = LINK->Token->next;
 	RequireToken(tokas, LINK);
-	FileNumber = intexpr(LINK);
+	FileNumber = IntegerExpression(LINK);
 	UnSetFilePtr(FileNumber);	// only one open file per FileNumber
 
 	if (Mode == tokinput)
@@ -3093,13 +3074,13 @@ void cmdswap(struct LOC_exec *LINK)
 		BothAreScalar++;
 //********************************************
 	if (v->IsStringVar && v->numdims == 0)
-		sAA = v->sv;	//simple string
+		sAA = v->StringVar;	//simple string
 	if (v->IsStringVar && v->numdims > 0)
-		sAA = (char *)v->sval;	//array string
+		sAA = (char *)v->AddressOfStringVar;	//array string
 	if (!v->IsStringVar && v->numdims == 0)
-		AA = &v->rv;	//simple number
+		AA = &v->DoubleVar;	//simple number
 	if (!v->IsStringVar && v->numdims > 0)
-		AA = (double *)v->val;	//array number
+		AA = (double *)v->AddressOfDoubleVar;	//array number
 //********************************************
 	RequireToken(tokcomma, LINK);
 	v = findvar(LINK);
@@ -3109,13 +3090,13 @@ void cmdswap(struct LOC_exec *LINK)
 		BothAreScalar++;
 //********************************************
 	if (v->IsStringVar && v->numdims == 0)
-		sBB = v->sv;	//simple string
+		sBB = v->StringVar;	//simple string
 	if (v->IsStringVar && v->numdims > 0)
-		sBB = (char *)v->sval;	//array string
+		sBB = (char *)v->AddressOfStringVar;	//array string
 	if (!v->IsStringVar && v->numdims == 0)
-		BB = &v->rv;	//simple number
+		BB = &v->DoubleVar;	//simple number
 	if (!v->IsStringVar && v->numdims > 0)
-		BB = (double *)v->val;	//array number
+		BB = (double *)v->AddressOfDoubleVar;	//array number
 //********************************************
 	if ((BothAreStrings == 2) && (sAA == NULL || sBB == NULL))
 		Abort("SWAP detected a NULL string");
@@ -3126,7 +3107,7 @@ void cmdswap(struct LOC_exec *LINK)
 		Abort("SWAP detected mixing array and scalar variables");
 	//********************************************
 	if (!BothAreStrings)
-		swap((byte *)AA, (byte *)BB, sizeof(double));
+		swap((char *)AA, (char *)BB, sizeof(double));
 	if (BothAreStrings && BothAreScalar)
 		swap(sAA, sBB, MAXSTRINGVAR);
 	if (BothAreStrings && !BothAreScalar)
@@ -3173,13 +3154,14 @@ void cmdinput(struct LOC_exec *LINK)
 	{
 		do
 		{
-			gets(s);
-			v = findvar(LINK);
-			if (*v->sval != NULL)
-				free(*v->sval);
+			fgets(inbuf, MAXSTRINGVAR, stdin);  
 
-			*v->sval = (char *)calloc(MAXSTRINGVAR, 1);
-			strcpy(*v->sval, s);
+			v = findvar(LINK);
+			if (*v->AddressOfStringVar != NULL)
+				free(*v->AddressOfStringVar);
+
+			*v->AddressOfStringVar = (char *)calloc(MAXSTRINGVAR, 1);
+			strcpy(*v->AddressOfStringVar, s);
 			if (!IsEndOfStatement(LINK))
 			{
 				RequireToken(tokcomma, LINK);
@@ -3205,7 +3187,7 @@ void cmdinput(struct LOC_exec *LINK)
 		}
 		tok1 = LINK->Token;
 		LINK->Token = tok;
-		*v->val = realexpr(LINK);
+		*v->AddressOfDoubleVar = DoubleExpression(LINK);
 
 		if (LINK->Token != NULL)
 		{
@@ -3231,7 +3213,7 @@ void cmdinput(struct LOC_exec *LINK)
 void cmdlet(BOOL implied, struct LOC_exec *LINK)
 {
 	varrec *v;
-	char *old, *new;
+	char *old, *gnew;
 	double d_value;
 	double *target;
 	char **starget;
@@ -3245,11 +3227,11 @@ void cmdlet(BOOL implied, struct LOC_exec *LINK)
 
 	if (v->IsStringVar)
 	{
-		starget = v->sval;
+		starget = v->AddressOfStringVar;
 	}
 	else
 	{
-		target = v->val;
+		target = v->AddressOfDoubleVar;
 	}
 
 	RequireToken(tokeq, LINK);
@@ -3258,15 +3240,15 @@ void cmdlet(BOOL implied, struct LOC_exec *LINK)
 	{
 		// allow arrays on both, left and right side of = 
 
-		d_value = realexpr(LINK);
-		v->val = target;
-		*v->val = d_value;
+		d_value = DoubleExpression(LINK);
+		v->AddressOfDoubleVar = target;
+		*v->AddressOfDoubleVar = d_value;
 		return;
 	}
-	new = strexpr(LINK);
-	v->sval = starget;
-	old = *v->sval;
-	*v->sval = new;
+	gnew = StringExpression(LINK);
+	v->AddressOfStringVar = starget;
+	old = *v->AddressOfStringVar;
+	*v->AddressOfStringVar = gnew;
 	if (old != NULL)
 		free(old);
 }
@@ -3275,7 +3257,7 @@ void cmdlet(BOOL implied, struct LOC_exec *LINK)
 
 void cmdgoto(struct LOC_exec *LINK)
 {
-	stmtline = mustfindline(intexpr(LINK));
+	stmtline = FindTargetLineNumber(IntegerExpression(LINK));
 	LINK->Token = NULL;
 	LINK->gotoflag = TRUE;
 }
@@ -3288,7 +3270,7 @@ void cmdif(struct LOC_exec *LINK)
 	register long i;
 	int kind;
 
-	n = realexpr(LINK);
+	n = DoubleExpression(LINK);
 	RequireToken(tokthen, LINK);
 
 	if (n == 0)	// if 1st expression is logically FALSE or ZERO
@@ -3366,13 +3348,13 @@ void cmdfor(struct LOC_exec *LINK)
 	if (lr.vp->IsStringVar)
 		SyntaxError();
 	RequireToken(tokeq, LINK);
-	*lr.vp->val = realexpr(LINK);
+	*lr.vp->AddressOfDoubleVar = DoubleExpression(LINK);
 	RequireToken(tokto, LINK);
-	lr.max = realexpr(LINK);
+	lr.max = DoubleExpression(LINK);
 	if (LINK->Token != NULL && LINK->Token->kind == tokstep)
 	{
 		LINK->Token = LINK->Token->next;
-		lr.step = realexpr(LINK);
+		lr.step = DoubleExpression(LINK);
 	}
 	else
 		lr.step = 1.0;
@@ -3380,7 +3362,7 @@ void cmdfor(struct LOC_exec *LINK)
 	lr.hometok = LINK->Token;
 	lr.kind = FORLOOP;
 	lr.next = loopbase;
-	if (lr.step >= 0 && *lr.vp->val > lr.max || lr.step <= 0 && *lr.vp->val < lr.max)
+	if (lr.step >= 0 && *lr.vp->AddressOfDoubleVar > lr.max || lr.step <= 0 && *lr.vp->AddressOfDoubleVar < lr.max)
 	{
 		saveline = stmtline;
 		i = 0;
@@ -3450,9 +3432,9 @@ void cmdnext(struct LOC_exec *LINK)
 
 	WITH = loopbase;
 
-	*WITH->vp->val += WITH->step;
+	*WITH->vp->AddressOfDoubleVar += WITH->step;
 
-	if ((WITH->step < 0 || *WITH->vp->val <= WITH->max) && (WITH->step > 0 || *WITH->vp->val >= WITH->max))
+	if ((WITH->step < 0 || *WITH->vp->AddressOfDoubleVar <= WITH->max) && (WITH->step > 0 || *WITH->vp->AddressOfDoubleVar >= WITH->max))
 	{
 		stmtline = WITH->homeline;
 		LINK->Token = WITH->hometok;
@@ -3475,7 +3457,7 @@ void cmdwhile(struct LOC_exec *LINK)
 	l->hometok = LINK->Token;
 	if (IsEndOfStatement(LINK))
 		return;
-	if (realexpr(LINK) != 0)
+	if (DoubleExpression(LINK) != 0)
 		return;
 	if (!skiploop(tokwhile, tokwend, LINK))
 		Abort("WHILE without WEND");
@@ -3506,7 +3488,7 @@ void cmdwend(struct LOC_exec *LINK)
 	} while (!found);
 	if (!IsEndOfStatement(LINK))
 	{
-		if (realexpr(LINK) != 0)
+		if (DoubleExpression(LINK) != 0)
 			found = FALSE;
 	}
 	tok = LINK->Token;
@@ -3517,7 +3499,7 @@ void cmdwend(struct LOC_exec *LINK)
 		LINK->Token = loopbase->hometok;
 		if (!IsEndOfStatement(LINK))
 		{
-			if (realexpr(LINK) == 0)
+			if (DoubleExpression(LINK) == 0)
 				found = FALSE;
 		}
 	}
@@ -3553,7 +3535,7 @@ void cmddo(struct LOC_exec *LINK)
 
 	if (IsEndOfStatement(LINK))
 		return;
-	if (realexpr(LINK) != 0)
+	if (DoubleExpression(LINK) != 0)
 		return;
 	if (!skiploop(tokwhile, tokloop, LINK))
 		Abort("DO without LOOP");
@@ -3598,7 +3580,7 @@ void cmdloop(struct LOC_exec *LINK)
 //*****************************************************************************
 	if (!IsEndOfStatement(LINK))
 	{
-		if (realexpr(LINK) != 0)
+		if (DoubleExpression(LINK) != 0)
 			found = FALSE;
 	}
 //*****************************************************************************
@@ -3612,7 +3594,7 @@ void cmdloop(struct LOC_exec *LINK)
 		LINK->Token = loopbase->hometok;
 		if (!IsEndOfStatement(LINK))
 		{
-			if (realexpr(LINK) == 0)
+			if (DoubleExpression(LINK) == 0)
 				found = FALSE;
 		}
 	}
@@ -3705,12 +3687,12 @@ void cmdread(struct LOC_exec *LINK)
 			LINK->Token = LINK->Token->next;
 		if (v->IsStringVar)
 		{
-			if (*v->sval != NULL)
-				free(*v->sval);
-			*v->sval = strexpr(LINK);
+			if (*v->AddressOfStringVar != NULL)
+				free(*v->AddressOfStringVar);
+			*v->AddressOfStringVar = StringExpression(LINK);
 		}
 		else
-			*v->val = realexpr(LINK);
+			*v->AddressOfDoubleVar = DoubleExpression(LINK);
 		datatok = LINK->Token;
 		LINK->Token = tok;
 		if (!IsEndOfStatement(LINK))
@@ -3733,7 +3715,7 @@ void cmdrestore(struct LOC_exec *LINK)
 		RestoreData();
 	else
 	{
-		dataline = mustfindline(intexpr(LINK));
+		dataline = FindTargetLineNumber(IntegerExpression(LINK));
 		datatok = dataline->txt;
 	}
 }
@@ -3742,10 +3724,10 @@ void cmdrestore(struct LOC_exec *LINK)
 
 void cmdlocate(struct LOC_exec *LINK)
 {
-	register long x, y;
-	y = (long)intexpr(LINK);
+	register int x, y;
+	y = IntegerExpression(LINK);
 	RequireToken(tokcomma, LINK);
-	x = (long)intexpr(LINK);
+	x = IntegerExpression(LINK);
 	locate(y, x);
 }
 
@@ -3758,9 +3740,9 @@ static void cmdmsgbox(struct LOC_exec *LINK)
 
 	Tmp1 = (char *)calloc(MAXSTRINGVAR, 1);
 	Tmp2 = (char *)calloc(MAXSTRINGVAR, 1);
-	Tmp1 = strexpr(LINK);
+	Tmp1 = StringExpression(LINK);
 	RequireToken(tokcomma, LINK);
-	Tmp2 = strexpr(LINK);
+	Tmp2 = StringExpression(LINK);
 	MessageBox(GetDesktopWindow(), Tmp1, Tmp2, 0);
 	free(Tmp1);
 	free(Tmp2);
@@ -3771,9 +3753,9 @@ static void cmdmsgbox(struct LOC_exec *LINK)
 static void cmdcolor(struct LOC_exec *LINK)
 {
 	register long fg, bg;
-	fg = (long)intexpr(LINK);
+	fg = (long)IntegerExpression(LINK);
 	RequireToken(tokcomma, LINK);
-	bg = (long)intexpr(LINK);
+	bg = (long)IntegerExpression(LINK);
 	color(fg, bg);
 }
 
@@ -3783,7 +3765,7 @@ static void cmdshell(struct LOC_exec *LINK)
 {
 	char *Tmp1;
 	Tmp1 = (char *)calloc(MAXSTRINGVAR, 1);
-	Tmp1 = strexpr(LINK);
+	Tmp1 = StringExpression(LINK);
 	system(Tmp1);
 	free(Tmp1);
 }
@@ -3794,7 +3776,7 @@ static void cmdkill(struct LOC_exec *LINK)
 {
 	char *Tmp1;
 	Tmp1 = (char *)calloc(MAXSTRINGVAR, 1);
-	Tmp1 = strexpr(LINK);
+	Tmp1 = StringExpression(LINK);
 	DeleteFile(Tmp1);
 	free(Tmp1);
 }
@@ -3806,7 +3788,7 @@ void cmdon(struct LOC_exec *LINK)
 	register long i;
 	looprec *l;
 
-	i = intexpr(LINK);
+	i = IntegerExpression(LINK);
 	if (LINK->Token != NULL && LINK->Token->kind == tokgosub)
 	{
 		l = (looprec *)calloc(sizeof(looprec), 1);
@@ -3865,7 +3847,7 @@ void cmddim(struct LOC_exec *LINK)
 
 		do
 		{
-			k = intexpr(LINK) + 1;
+			k = IntegerExpression(LINK) + 1;
 
 			if (k < 1)
 				BadSubScript();
@@ -3886,7 +3868,7 @@ void cmddim(struct LOC_exec *LINK)
 		LINK->Token = LINK->Token->next;
 		v->numdims = i;
 
-		if (v->IsStringVar)  // example: DIM A$(100) will create an array of NULL 32-bit pointers
+		if (v->IsStringVar)	// example: DIM A$(100) will create an array of NULL 32-bit pointers
 		{
 			v->sarr = (char **)calloc(j * 4, 1);
 			for (i = 0; i < j; i++)
@@ -3912,9 +3894,9 @@ void Execute(void)
 	char *ioerrmsg;
 	char Str1[2048] = { 0 };
 	Esc_Code = 0;
-
+//*********************************************
 	TRY(try1);
-
+//*********************************************
 	do
 	{
 		do
@@ -3989,11 +3971,11 @@ void Execute(void)
 						break;
 
 					case tokload:
-						cmdload(FALSE, stringexpr(Str1, &V), &V);
+						cmdload(FALSE, StringExpressionEx(Str1, &V), &V);
 						break;
 
 					case tokmerge:
-						cmdload(TRUE, stringexpr(Str1, &V), &V);
+						cmdload(TRUE, StringExpressionEx(Str1, &V), &V);
 						break;
 
 					case toksave:
@@ -4180,9 +4162,9 @@ void Execute(void)
 		}
 
 	} while (stmtline != NULL);
-
+	//*********************************************
 	CATCH(try1, _Ltry1);
-
+//********************************************* 
 	if (Esc_Code == -20)
 		printf("Break");
 
@@ -4199,11 +4181,11 @@ void Execute(void)
 				break;
 
 			case -6:
-				printf("Real math overflow");
+				printf("Double math overflow");
 				break;
 
 			case -7:
-				printf("Real math underflow");
+				printf("Double math underflow");
 				break;
 
 			case -8:
@@ -4231,9 +4213,9 @@ void Execute(void)
 		printf(" line number: %ld", stmtline->num);
 
 	putchar('\n');
-
+//*********************************************
 	END_TRY(try1);
-
+//*********************************************
 }
 
 //****************************************************************
@@ -4776,39 +4758,38 @@ LRESULT CALLBACK SBProc(int Msg, WPARAM wParam, LPARAM lParam)
 
 //****************************************************************
 
-void OK_CANCEL (char *Title, char *Message)
+void OK_CANCEL(char *Title, char *Message)
 {
-  MessageBox(GetActiveWindow(),Message,Title,1);
+	MessageBox(GetActiveWindow(), Message, Title, 1);
 }
 
 //****************************************************************
 
-
-int YN_CANCEL (char *Title, char *Message)
+int YN_CANCEL(char *Title, char *Message)
 {
-  int a=0;
-  int b=0;
+	int a = 0;
+	int b = 0;
 
-  a=MessageBox(GetActiveWindow(),Message,Title,3);
-  for(;;)
-  {
-    if(a==2)
-      {
-        b=3;
-        break;
-      }
-    if(a==6)
-      {
-        b=1;
-        break;
-      }
-    if(a==7)
-      {
-        b=2;
-      }
-    break;
-  }
-  return b;
+	a = MessageBox(GetActiveWindow(), Message, Title, 3);
+	for (;;)
+	{
+		if (a == 2)
+		{
+			b = 3;
+			break;
+		}
+		if (a == 6)
+		{
+			b = 1;
+			break;
+		}
+		if (a == 7)
+		{
+			b = 2;
+		}
+		break;
+	}
+	return b;
 }
 
 //****************************************************************
@@ -5361,7 +5342,7 @@ char *space(int count)
 
 //****************************************************************
 
-BumpDown()
+void BumpDown()
 {
 	Indent--;
 	Indent--;
@@ -5372,7 +5353,7 @@ BumpDown()
 
 //****************************************************************
 
-BumpUp()
+void BumpUp()
 {
 	if (Indent < 0)
 		Indent = 0;
@@ -5531,7 +5512,7 @@ char *Escape_Message(char *buf, int code, int ior, char *prefix)
 				strcat(buf, " (divide by zero)");
 				break;
 			case -6:
-				strcat(buf, " (real math overflow)");
+				strcat(buf, " (Double math overflow)");
 				break;
 			case -8:
 				strcat(buf, " (value range error)");
@@ -5596,7 +5577,6 @@ int IsNumber(char *a)
 	return TRUE;
 }
 //****************************************************************
-
 
 void Setup_Console()
 {
@@ -5679,7 +5659,7 @@ int VerifyInstr(char *mane, char *match, int offset)
 
 //****************************************************************
 
-char *repeat(char *a, int count)	// backwards from BCX but logical
+char *repeat(char *a, int count)
 {
 	register char *strtmp = BCX_TmpStr((1 + count) * strlen(a));
 	while (count-- > 0)
@@ -5689,9 +5669,9 @@ char *repeat(char *a, int count)	// backwards from BCX but logical
 
 //****************************************************************
 
-void swap(byte *A, byte *B, int length)
+void swap(char *A, char *B, int length)
 {
-	byte t;
+	char t;
 	while (length--)
 	{
 		t = *A;
@@ -5704,9 +5684,9 @@ void swap(byte *A, byte *B, int length)
 
 char *crlf(void)
 {
-  char*stmp = calloc(3,1);
-  stmp[0]=13;
-  stmp[1]=10;
-  stmp[2]= 0;
-  return stmp;
+	char *stmp = calloc(3, 1);
+	stmp[0] = 13;
+	stmp[1] = 10;
+	stmp[2] = 0;
+	return stmp;
 }

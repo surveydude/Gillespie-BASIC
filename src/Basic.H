@@ -95,15 +95,14 @@ typedef struct varrec {
     int numdims;
     BOOL IsStringVar;
     double *arr;
-    double *val, rv;
+    double *AddressOfDoubleVar, DoubleVar;  // originally named: *val, rv;
     char **sarr;
-    char **sval, *sv;
+    char **AddressOfStringVar, *StringVar;  // originally named: **sval, *sv;
 } varrec;
 
 //*****************************************************************************
 
 typedef struct linerec {
-    char strlabel [64];  //for future creation of TEXT labels for GOTO/GOSUB
     long num, num2;
     tokenrec *txt;
     struct linerec *next;
@@ -140,8 +139,8 @@ struct LOC_exec {
 //                            CHIPMUNK Prototypes
 //*****************************************************************************
 
-valrec factor (struct LOC_exec*);
-valrec expr   (struct LOC_exec*);
+valrec factor     (struct LOC_exec*);
+valrec Expression (struct LOC_exec*);
 
 void Execute(void);
 void MismatchError(void);
@@ -155,7 +154,14 @@ void Parse(char*,tokenrec**);
 void ParseInput(tokenrec**);
 void ListTokens(FILE*, tokenrec*);
 void cmdload(BOOL,char*,struct LOC_exec*);
+void cmdbye(void);
 void ClearAll(void);
+void BumpUp(void);
+void BumpDown(void);
+void Initialize(void);
+
+int  IsNumber(char*);
+
 
 //*****************************************************************************
 //                Support and Prototypes (from the BCX project)
@@ -215,7 +221,7 @@ void Center(HWND);
 void cls(void);
 void color(long, long);
 void locate(int, int, int = 1, int = 12);
-void swap(byte*, byte*, int);
+void swap(char*, char*, int);
 char *crlf(void);
 
 HWND GetConsoleWndHandle(void);
