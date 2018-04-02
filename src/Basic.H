@@ -142,6 +142,7 @@ struct LOC_exec {
 valrec factor     (struct LOC_exec*);
 valrec Expression (struct LOC_exec*);
 
+int  IsNumber(char*);
 void Execute(void);
 void MismatchError(void);
 void ClearLoops(void);
@@ -159,9 +160,6 @@ void ClearAll(void);
 void BumpUp(void);
 void BumpDown(void);
 void Initialize(void);
-
-int  IsNumber(char*);
-
 
 //*****************************************************************************
 //                Support and Prototypes (from the BCX project)
@@ -283,17 +281,6 @@ static linerec *stmtline, *dataline;
 static tokenrec *stmttok, *datatok, *buf;
 static int exitflag;
 
-
-//*****************************************************************************
-//                           My additional globals
-//*****************************************************************************
-
-static int  Dirtyflag = {0};
-static char DateStr[255]= {0};
-static HANDLE FileHandle;
-static FILEHANDLETYPE FILEREC[256];
-static WIN32_FIND_DATA FindData;
-
 //*****************************************************************************
 //                       Affects our console window
 //*****************************************************************************
@@ -304,4 +291,13 @@ HWND hConsole;
 int color_fg = 7;
 int color_bg = 0;
 
+//*****************************************************************************
+//                          Additional Globals
+//*****************************************************************************
+
+static int  Dirtyflag = {0};
+static char DateStr[255]= {0};
+static HANDLE FileHandle;
+static FILEHANDLETYPE FILEREC[256];
+static WIN32_FIND_DATA FindData;
 
