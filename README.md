@@ -4,7 +4,7 @@ Gillespie Basic for Windows is a spinoff from the original 1990's Chipmunk Basic
 
 Over the years, several people have repurposed the Chipmunk Basic 1.0 source code, porting and modifying it in unique ways for various platforms including Apple, Atari, Linux, and others.  I decided naming this software "Gillespie Basic" would pay respect to the original programmer and more easily distinguish this Windows project from the others.
 
-Improving Gillespie Basic is a part-time recreational hobby for me but one that I think other folks will enjoy playing around with. Whereas Gillespie Basic retains 99% of the original Chipmunk 1.0 functionality, and fewer bugs, I've spent many hours adding more functionality to it, including a BASIC file I/O system and many new BASIC functions. I've tried to make the "C" source code easier to understand and work with.  Much of the code behind my enhancements comes from one of my earlier projects, BCX (The Basic To C Translator). 
+Improving Gillespie Basic is a part-time recreational hobby for me but one that I think other folks will enjoy playing around with. Whereas Gillespie Basic retains 99% of the original Chipmunk 1.0 functionality, and fewer bugs, I've spent many hours adding more functionality to it, including a BASIC file I/O system and many new BASIC functions. I've tried to make the "C" source code easier to understand and work with.  
 
 My development PC is running Windows 10 Pro 64-bit but I'm compiling for 32-bit.  I use Mingw32, Pelles-C, and Lcc-Win32 compilers to
 check simple compatibility. Other compilers will certainly work with little or no fuss. But understand that Gillespie Basic makes many
