@@ -11,8 +11,7 @@ check simple compatibility. Other compilers will certainly work with little or n
 calls to the Win32 API, so porting this source code to other platforms will require some effort.  Having said all that, I think the
 average people, with little or no programming experience, will find Gillespie Basic fun and useful. 
 
-There is (1) header file and (1) "C" source file which produced (1) very small (~120KB) executable.  I've also uploaded a bunch of sample
-files that were used during testing and that show off some of the new functions and commands.  You should browse the Gillespie Basic text
-file for the list of functions, commands, and capabilities of this BASIC interpreter.
+There is (1) header file and (1) "C" source file which produces (1) very small (~120KB) standalone 32-bit Windows executable.  
+You will also find a collection of sample files that were used during testing and which demonstrates some of the built-in functionality.  You should browse the Gillespie Basic text file for a complete list of functions, commands, and capabilities of this BASIC interpreter.
 
-Gillespie BASIC is both usable and stable, as is.  Enjoy!
+Have fun!
