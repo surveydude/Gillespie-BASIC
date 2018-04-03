@@ -20,17 +20,26 @@
 #define MAXLINENUMBER   1048756	
 #define MAXSTRINGVAR       2048   // Each BASIC string VARIABLE can hold 2k
 //*****************************************************************************
-#define GB_gets_s(sbuf,length)fgets(sbuf,length,stdin);if(sbuf[strlen(sbuf)-1]=='\n')sbuf[strlen(sbuf)-1]=0
+
+char *GB_gets_s(char *sbuf, long length) // the relative convenience of gets_s 
+{                                        // and the relative safety of fgets
+	fgets(sbuf, length, stdin);
+	if (sbuf[strlen(sbuf) - 1] == '\n')
+		sbuf[strlen(sbuf) - 1] = 0;
+	return sbuf;
+}
+
 //*****************************************************************************
 //                Simplified the P2C  Try-Catch macros below
 //*****************************************************************************
 
-typedef struct BASIC_jmp_buf
-{
-   struct BASIC_jmp_buf *next;
-   jmp_buf jbuf;                 // jmp_buf is a type defined in setjmp.h
-}  BASIC_jmp_buf;
+typedef struct BASIC_jmp_buf {
+	struct BASIC_jmp_buf *next;
+	jmp_buf jbuf;	// jmp_buf is a type defined in setjmp.h
+}BASIC_jmp_buf;
+
 //*****************************************************************************
+
 #define TRY(x) do {BASIC_jmp_buf __try_jb;__try_jb.next=Top_of_Jump_Buffer;if(!setjmp((Top_of_Jump_Buffer = &__try_jb)->jbuf)){
 #define CATCH(x,L) Top_of_Jump_Buffer = __try_jb.next; } else {if(0){L: Top_of_Jump_Buffer = __try_jb.next;}
 #define END_TRY(x)  } } while (0)

@@ -5,7 +5,6 @@
 
 #include "Basic.h"
 
- 
 
 void Initialize()
 {
@@ -18,6 +17,8 @@ void Initialize()
   Dirtyflag = FALSE;
   ClearAll();
 }
+
+
 
 int main(int argc, char *argv[])
 {
