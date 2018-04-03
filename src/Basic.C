@@ -5,6 +5,8 @@
 
 #include "Basic.h"
 
+ 
+
 void Initialize()
 {
   inbuf = (char *)calloc(MAXSTRINGVAR, 1);
@@ -38,8 +40,7 @@ int main(int argc, char *argv[])
     else
     {
       printf("\n%s", "Ready: ");
-      fgets(inbuf, MAXSTRINGVAR, stdin);
-      strcpy(inbuf, trim(inbuf));
+      GB_gets_s(inbuf,MAXSTRINGVAR);
     }
 
     //********************************************************************
@@ -2573,7 +2574,6 @@ void cmdload(BOOL merging, char *name, struct LOC_exec *LINK)
   {
     if (inbuf[strlen(inbuf) - 1] == 10)
       inbuf[strlen(inbuf) - 1] = 0;
-
 //-------------------------------------------------------
 // we can do some PRE-PROCESSING of inbuf at this stage
 // Let's add line numbers to files without them
@@ -3017,7 +3017,8 @@ void cmdflineinput(struct LOC_exec *LINK)  //LINE INPUT handler
   v = findvar(LINK);
 
   fgets(s, 2047, FileNumber);
-  s[strlen(s) - 2] = 0;
+ if (s[strlen(s) - 1] == 10)
+      s[strlen(s) - 1] = 0;
 
   if (*v->AddressOfStringVar != NULL)
     free(*v->AddressOfStringVar);
@@ -3157,9 +3158,8 @@ void cmdinput(struct LOC_exec *LINK)
   {
     do
     {
-      fgets(inbuf, MAXSTRINGVAR, stdin);
-      strcpy(inbuf, trim(inbuf));
-
+      GB_gets_s(inbuf, MAXSTRINGVAR);
+      
       v = findvar(LINK);
       if (*v->AddressOfStringVar != NULL)
         free(*v->AddressOfStringVar);

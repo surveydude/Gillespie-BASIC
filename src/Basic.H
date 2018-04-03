@@ -19,7 +19,8 @@
 #define VAR_NAME_LEN         32
 #define MAXLINENUMBER   1048756	
 #define MAXSTRINGVAR       2048   // Each BASIC string VARIABLE can hold 2k
-
+//*****************************************************************************
+#define GB_gets_s(sbuf,length)fgets(sbuf,length,stdin);if(sbuf[strlen(sbuf)-1]=='\n')sbuf[strlen(sbuf)-1]=0
 //*****************************************************************************
 //                Simplified the P2C  Try-Catch macros below
 //*****************************************************************************
