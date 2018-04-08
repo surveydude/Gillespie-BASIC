@@ -21,8 +21,8 @@
 #define MAXSTRINGVAR       2048   // Each BASIC string VARIABLE can hold 2k
 //*****************************************************************************
 
-char *GB_gets_s(char *sbuf, long length) // the relative convenience of gets_s 
-{                                        // and the relative safety of fgets
+char *GB_gets(char *sbuf, long length)	// the relative convenience of gets_s 
+{	                                    // and the relative safety of fgets
 	fgets(sbuf, length, stdin);
 	if (sbuf[strlen(sbuf) - 1] == '\n')
 		sbuf[strlen(sbuf) - 1] = 0;
@@ -83,7 +83,8 @@ typedef enum {
 	tokpi, tokwindir_, tokexist, tokenc_, tokfindfirst_, tokfindnext_, tokappend, 
 	tokbinary, tokget,tokput,tokseek, tokinputbox,toklof,toksleep,tokinstr,
 	tokrepeat_, toktextmode, tokverify, tokinkey_, tokkeypress, toktimer, 
-	tokround, tokswap, tokint, tokclear, tokcrlf_,tokokcancel,tokyncancel
+	tokround, tokswap, tokint, tokclear, tokcrlf_,tokokcancel,tokyncancel,
+    tokenviron_
 } tokenkinds;
 //*****************************************************************************
 
