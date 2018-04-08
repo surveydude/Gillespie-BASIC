@@ -3,7 +3,7 @@
                   Bug Fixes, Modifications, and Enhancements To 
                            	Chipmunk BASIC (1.0)
 			  	   for MS-Windows 
-                            By Kevin Diggins (2005-2018)
+                              By Kevin Diggins (2018)
 
 	      This runs on 32 and 64 bit Windows systems equally well )
 
@@ -11,7 +11,7 @@
 * At startup, a Windows OpenFileName dialog box will open for loading a program.
   A chosen file will have its drive,path, and filename displayed on the window title.
   If you make changes to a loaded file, you need only type,"SAVE" (no filename).
-  Alternatively, you can type,"SAVE", specifying a valid Windows filename.
+  Alternatively, you can also type,"SAVE" and specify a valid Windows filename.
 
 * BASIC now starts up in 43 line mode, centered on the screen
 
