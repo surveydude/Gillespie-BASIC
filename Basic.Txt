@@ -3,7 +3,7 @@
                   Bug Fixes, Modifications, and Enhancements To 
                            	Chipmunk BASIC (1.0)
 			  	   for MS-Windows 
-                              By Kevin Diggins (2018)
+                            By Kevin Diggins (2005-2018)
 
 	      This runs on 32 and 64 bit Windows systems equally well )
 
@@ -11,22 +11,21 @@
 * At startup, a Windows OpenFileName dialog box will open for loading a program.
   A chosen file will have its drive,path, and filename displayed on the window title.
   If you make changes to a loaded file, you need only type,"SAVE" (no filename).
-  Alternatively, you can also type,"SAVE" and specify any valid Windows filename.
+  Alternatively, you can type,"SAVE", specifying a valid Windows filename.
 
-* The program starts up in 43 line mode, centered on the screen.
+* BASIC now starts up in 43 line mode, centered on the screen
 
-* At any time, typing "LOAD" with no filename will display an OpenFileName dialog box
+* Typing "LOAD" with no filename will open the Windows OpenFileName dialog box
 
-* LOAD now accepts any extensions. ex: LOAD "a" or LOAD "A.bas" or LOAD "a.inc"
+* LOAD now accepts any extensions i.e. - LOAD "a" or LOAD "A.bas" or LOAD "a.inc"
 
-* Files LOADED and SAVED now use ".Bas" as the default file extension
+* Files LOADED and SAVED now use ".BAS" as the default file extension
 
 * FIXED!!!  Chipmunk 1.0 leaked memory terribly by never freeing string arrays.
 
 * FIXED!!!  Allow arrays on BOTH sides of an assignment. Example: A(J) = A(J+1)
 
-* Files loaded without line numbers will automatically be assigned line numbers.  
-  (You are responsible for updating the targets of any GOTO or GOSUB statements)
+* Files loaded without line numbers will automatically be assigned line numbers.
 
 * Removed PEEK and POKE -  It's just unwise to use those in WINDOWS.
 
@@ -41,11 +40,13 @@
 
 * Improvements made to the spacing between tokens when LIST'ed
 
+* The LOAD-ed filename and path are now displayed on the Console Title
+
 * String Variables have been increased from 255 bytes to 2k 
 
-* Variables are now case-insensitive 
+* Variables are now case-insensitive and self adjusting.
 
-* BASIC KEYWORDS are now case-insensitive 
+* BASIC KEYWORDS are no longer case sensitive
 
 * Removed the annoying BEEP (BEL) whenever an error would occur
 
@@ -79,6 +80,8 @@ CRLF$ ....... produces the same thing as CHR$(13)+CHR$(10) but less typing
 * Added SetCursor 0 or 1 ... zero hides the blinking cursor, one shows it
 
 * Added LOCATE Y,X
+
+* Added GOTOXY X,Y (functionally identical to LOCATE but less confusing)
 
 * Added COLOR  FG, BG
 
