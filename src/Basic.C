@@ -461,6 +461,8 @@ void Parse(char *inbuf, tokenrec **buf)
 							t->kind = tokrestore;
 						else if (!stricmp(token, "locate"))
 							t->kind = toklocate;
+						else if (!stricmp(token, "gotoxy"))
+							t->kind = tokgotoxy;
 						else if (!stricmp(token, "color"))
 							t->kind = tokcolor;
 						else if (!stricmp(token, "on"))
@@ -1233,6 +1235,10 @@ void ListTokens(FILE *f, tokenrec *buf)
 
 			case toklocate:
 				HiLite(f, "LOCATE ");
+				break;
+
+			case tokgotoxy:
+				HiLite(f, "GOTOXY ");
 				break;
 
 			case tokcolor:
@@ -3737,6 +3743,14 @@ void cmdlocate(struct LOC_exec *LINK)
 	locate(y, x);
 }
 
+void cmdgotoxy(struct LOC_exec *LINK)
+{
+	register int x, y;
+	x = IntegerExpression(LINK);
+	RequireToken(tokcomma, LINK);
+	y = IntegerExpression(LINK);
+	locate(y, x);
+}
 //****************************************************************
 
 static void cmdmsgbox(struct LOC_exec *LINK)
@@ -4111,6 +4125,10 @@ void Execute(void)
 
 					case toklocate:
 						cmdlocate(&V);
+						break;
+
+					case tokgotoxy:
+						cmdgotoxy(&V);
 						break;
 
 					case tokmsgbox:
