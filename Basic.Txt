@@ -3,7 +3,7 @@
                   Bug Fixes, Modifications, and Enhancements To 
                            	Chipmunk BASIC (1.0)
 			  	   for MS-Windows 
-                            By Kevin Diggins (2005-2018)
+                              By Kevin Diggins (2018)
 
 	      This runs on 32 and 64 bit Windows systems equally well )
 
