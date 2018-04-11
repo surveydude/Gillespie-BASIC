@@ -174,29 +174,29 @@ CRLF$ ....... produces the same thing as CHR$(13)+CHR$(10) but less typing
 
 * Added A$ = ENVIRON$ ("OS Environment Variable Name"): Ex: PRINT ENVIRON$ ("UserProfile")
 
-* Added A$ = ENC$   (Z$)    ' A$ will have a copy of Z$ ENClosed in double quotes
+* Added A$ = ENCLOSE$ (Z$)   ' A$ will have a copy of Z$ wrapped in double quotes
 
 * Added A$ = USING$ (Format$, Number)  'This is a bare-bones implementation
 
 * Added A$ = SPACE$ (Number_of_Spaces)
 
-* Added A$ = INKEY$ 
+* Added A$ = INKEY$          returns the ASCII character for the key pressed
 
-* Added A$ = HEX$(number)
+* Added A$ = HEX$(number)    returns base 16 version of a base 10 number
 
-* Added A$ = LTRIM$ (A$)
+* Added A$ = LTRIM$ (A$)     Trims white space on left side of string
 
-* Added A$ = RTRIM$ (A$)
+* Added A$ = RTRIM$ (A$)     Trims white space on right side of string
 
-* Added A$ = TRIM$  (A$)
+* Added A$ = TRIM$  (A$)     Trims white space on both sides of string
 
-* Added A$ = UCASE$ (A$)
+* Added A$ = UCASE$ (A$)     Returns Upper Case: APPLES
 
-* Added A$ = LCASE$ (A$)
+* Added A$ = LCASE$ (A$)     Returns Upper Case: apples
 
-* Added A$ = MCASE$ (A$)
+* Added A$ = MCASE$ (A$)     Returns Mixed Case: Apples
 
-* Added A$ = REPEAT$ (A$,Number)
+* Added A$ = REPEAT$ (A$,Number) example: A$=REPEAT$("ABC",3) returns "ABCABCABC"
 
 * Added A$ = LEFT$   (A$,Number)
 
@@ -204,23 +204,25 @@ CRLF$ ....... produces the same thing as CHR$(13)+CHR$(10) but less typing
 
 * Added A$ = IREPLACE$ (Main$, Match$, Replace$)   'case-insensitive replace function
 
-* Added A$ = EXTRACT$  (Main$, Match$)
+* Added A$ = EXTRACT$  (Main$, Match$)    example: A$ = EXTRACT$("Filename.bas",".") returns "Filename"
 
-* Added A$ = REMAIN$   (Main$, Match$)
+* Added A$ = REMAIN$   (Main$, Match$)    A$ = REMAIN$("Filename.bas", "name") results in A$ = ".bas"
 
-* Added A$ = REMOVE$   (Main$, Match$)
+* Added A$ = RETAIN$   (Main$, Match$)    A$ = RETAIN$("12345abc67890","cba") results in A$ = "abc"
+
+* Added A$ = REMOVE$   (Main$, Match$)    returns a copy of all instances of MATCH$ removed from MAIN$
 
 * Added A$ = TIME$
 
-* Added A$ = DATE$
+* Added A$ = DATE$ 
 
-* Added A$ = CURDIR$
+* Added A$ = CURDIR$     returns the current working directory (folder)
 
-* Added A$ = SYSDIR$
+* Added A$ = SYSDIR$     returns the Windows OS system directory (folder)
 
-* Added A$ = TEMPDIR$
+* Added A$ = TEMPDIR$    returns the Windows OS Temp directory (folder) 
 
-* Added A$ = WINDIR$
+* Added A$ = WINDIR$     returns the Windows OS directory (folder)
 
 
 **************************************************
