@@ -84,7 +84,7 @@ typedef enum {
 	tokbinary, tokget,tokput,tokseek, tokinputbox,toklof,toksleep,tokinstr,
 	tokrepeat_, toktextmode, tokverify, tokinkey_, tokkeypress, toktimer, 
 	tokround, tokswap, tokint, tokclear, tokcrlf_,tokokcancel,tokyncancel,
-    tokenviron_
+    tokretain_,tokenviron_
 } tokenkinds;
 //*****************************************************************************
 
@@ -207,6 +207,7 @@ char *left(char*, int);
 char *right(char*, int);
 char *extract(char*, char*);
 char *remain(char*, char*);
+char *retain(char*, char*);
 char *RemoveStr(char*, char*);
 char *iReplace(char*, char*, char*);
 char *timef(void);

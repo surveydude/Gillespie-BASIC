@@ -9,9 +9,9 @@ void Initialize()
 {
 	inbuf = (char *)calloc(MAXSTRINGVAR, 1);
 	OurLoadedFname = calloc(1024, 1);
-	linebase = 0;
-	varbase = 0;
-	loopbase = 0;
+	linebase = NULL;
+	varbase = NULL;
+	loopbase = NULL;
 	exitflag = FALSE;
 	Dirtyflag = FALSE;
 	ClearAll();
@@ -40,7 +40,7 @@ int main(int argc, char *argv[])
 		//    This allows us to invoke the Windows GetFileName dialogbox
 		//********************************************************************
 		if (stricmp(inbuf, "load") == 0)
-        sprintf(inbuf, "%s%s", "load ", enc(""));
+			sprintf(inbuf, "%s%s", "load ", enc(""));
 		//********************************************************************
 		ParseInput(&buf);	// buf is a tokenrec ptr
 
@@ -355,6 +355,8 @@ void Parse(char *inbuf, tokenrec **buf)
 							t->kind = tokucase_;
 						else if (!stricmp(token, "enc$"))
 							t->kind = tokenc_;
+						else if (!stricmp(token, "enclose$"))
+							t->kind = tokenc_;
 						else if (!stricmp(token, "findfirst$"))
 							t->kind = tokfindfirst_;
 						else if (!stricmp(token, "findnext$"))
@@ -377,6 +379,8 @@ void Parse(char *inbuf, tokenrec **buf)
 							t->kind = tokinstr;
 						else if (!stricmp(token, "remain$"))
 							t->kind = tokremain_;
+						else if (!stricmp(token, "retain$"))
+							t->kind = tokretain_;
 						else if (!stricmp(token, "remove$"))
 							t->kind = tokremove_;
 						else if (!stricmp(token, "ireplace$"))
@@ -1003,7 +1007,7 @@ void ListTokens(FILE *f, tokenrec *buf)
 				break;
 
 			case tokenc_:
-				HiLite(f, "ENC$");
+				HiLite(f, "ENCLOSE$");
 				break;
 
 			case tokucase_:
@@ -1056,6 +1060,10 @@ void ListTokens(FILE *f, tokenrec *buf)
 
 			case tokremain_:
 				HiLite(f, "REMAIN$");
+				break;
+
+			case tokretain_:
+				HiLite(f, "RETAIN$");
 				break;
 
 			case tokireplace_:
@@ -2080,6 +2088,18 @@ valrec factor(struct LOC_exec *LINK)
 			RequireToken(tokrp, LINK);
 			break;
 
+		case tokretain_:
+			RequireToken(toklp, LINK);
+			n.IsStringVal = TRUE;
+			n.sval = StringExpression(LINK);
+			strcpy(Tmp1, n.sval);
+			RequireToken(tokcomma, LINK);
+			n.IsStringVal = TRUE;
+			n.sval = StringExpression(LINK);
+			strcpy(n.sval, retain(Tmp1, n.sval));
+			RequireToken(tokrp, LINK);
+			break;
+
 		case tokremove_:
 			RequireToken(toklp, LINK);
 			n.IsStringVal = TRUE;
@@ -3026,7 +3046,7 @@ void cmdflineinput(struct LOC_exec *LINK)	//LINE INPUT handler
 	v = findvar(LINK);
 
 	fgets(s, 2047, FileNumber);
-		s[strlen(s) - 1] = 0;
+	s[strlen(s) - 1] = 0;
 
 	if (*v->AddressOfStringVar != NULL)
 		free(*v->AddressOfStringVar);
@@ -4509,7 +4529,7 @@ char *ltrim(char *S)
 	register char *strtmp = BCX_TmpStr(strlen(S));
 
 	strcpy(strtmp, S);
-	while ((*strtmp == 32) && *strtmp != 0)
+	while (*strtmp == 32)
 		strtmp++;
 	return strtmp;
 }
@@ -5659,7 +5679,19 @@ char *mid(char *S, int start, int length)
 }
 
 //****************************************************************
-
+char *retain(char *Text, char *ValidChars)
+{
+	char *BCX_RetStr = BCX_TmpStr(strlen(Text));
+	char *temp = BCX_RetStr;
+	while (*Text)
+	{
+		if (strchr(ValidChars, *Text))
+			*(temp++) = *Text;
+		Text++;
+	}
+	return BCX_RetStr;
+}
+//****************************************************************
 int Verify(char *Src, char *Allowed)
 {
 	int i, j;
