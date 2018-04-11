@@ -40,8 +40,6 @@
 
 * Improvements made to the spacing between tokens when LIST'ed
 
-* The LOAD-ed filename and path are now displayed on the Console Title
-
 * String Variables have been increased from 255 bytes to 2k 
 
 * Variables are now case-insensitive and self adjusting.
