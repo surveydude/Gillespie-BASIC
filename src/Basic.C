@@ -1,5 +1,5 @@
 //*****************************************************************************
-#define VERSION "Gillespie BASIC v1.55 for Windows by Kevin Diggins (2018)\n"
+#define VERSION "Gillespie BASIC v1.56 for Windows by Kevin Diggins (2018)\n"
 //              Based on Chipmunk Basic 1.0 by Dave Gillespie
 //*****************************************************************************
 
@@ -18,6 +18,7 @@ void Initialize()
 	Setup_Console();
 	printf(VERSION);
 }
+
 
 int main(int argc, char *argv[])
 {
@@ -487,6 +488,10 @@ void Parse(char *inbuf, tokenrec **buf)
 							t->kind = tokload;
 						else if (!stricmp(token, "shell"))
 							t->kind = tokshell;
+
+						else if (!stricmp(token, "eval"))
+							t->kind = tokeval;
+
 						else if (!stricmp(token, "kill"))
 							t->kind = tokkill;
 						else if (!stricmp(token, "open"))
@@ -1292,6 +1297,10 @@ void ListTokens(FILE *f, tokenrec *buf)
 
 			case tokshell:
 				HiLite(f, "SHELL ");
+				break;
+
+			case tokeval:
+				HiLite(f, "EVAL ");
 				break;
 
 			case tokkill:
@@ -3812,6 +3821,18 @@ static void cmdshell(struct LOC_exec *LINK)
 
 //****************************************************************
 
+static void cmdeval(struct LOC_exec *LINK)
+{
+	strcpy(inbuf, trim(StringExpression(LINK)));
+	ParseInput(&buf);
+	stmttok = buf;
+	if (stmttok != NULL)
+		Execute();
+	DisposeTokens(&buf);
+}
+
+//****************************************************************
+
 static void cmdkill(struct LOC_exec *LINK)
 {
 	char *Tmp1;
@@ -4161,6 +4182,10 @@ void Execute(void)
 
 					case tokshell:
 						cmdshell(&V);
+						break;
+
+					case tokeval:
+						cmdeval(&V);
 						break;
 
 					case tokkill:

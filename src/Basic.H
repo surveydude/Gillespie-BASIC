@@ -59,7 +59,7 @@ BASIC_jmp_buf*  Top_of_Jump_Buffer;
 //*****************************************************************************
 //  IMPORTANT:  DO NOT REARRANGE THE (ORIGINAL) TOP-HALF OF THIS ENUM 
 //  Dave Gillespie has some tests (< than this token > than that token) that
-//  will will break some parsing ( Particularly, FOR-NEXT )
+//  will break some parsing ( Particularly, FOR-NEXT )
 //*****************************************************************************
 typedef enum {
     tokvar, toknum, tokstr, tokSyntaxError, tokplus, tokminus, toktimes, tokdiv,
@@ -84,7 +84,7 @@ typedef enum {
 	tokbinary, tokget,tokput,tokseek, tokinputbox,toklof,toksleep,tokinstr,
 	tokrepeat_, toktextmode, tokverify, tokinkey_, tokkeypress, toktimer, 
 	tokround, tokswap, tokint, tokclear, tokcrlf_,tokokcancel,tokyncancel,
-    tokretain_,tokenviron_
+    tokretain_,tokenviron_,tokeval
 } tokenkinds;
 //*****************************************************************************
 
@@ -171,7 +171,7 @@ void ClearAll(void);
 void BumpUp(void);
 void BumpDown(void);
 void Initialize(void);
-
+char *StringExpression(struct LOC_exec *);
 //*****************************************************************************
 //                Support and Prototypes (from the BCX project)
 //*****************************************************************************
