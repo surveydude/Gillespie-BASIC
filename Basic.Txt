@@ -71,6 +71,12 @@ CRLF$ ....... produces the same thing as CHR$(13)+CHR$(10) but less typing
 ************************************************************************************
            New Commands & Functions added to CHIPMUNK 1.0 by Kevin Diggins  
 ************************************************************************************
+* Added EVAL command.  Usage:  Eval "String expression" or Variable$.  Every command
+  and function in Chipmunk can potentially be dynamically evaluated from a string.
+  This means a string variable could act a bit like a FUNCTION:  For Example:
+    10 A$ = "FOR i=1 TO 5:Tmp$=Tmp$+STR$(i)+SPACE$(1):NEXT:A$=Tmp$"
+    20 EVAL A$
+    30 PRINT A$  ' This will display>>>  1 2 3 4 5
 
 * Added TEXTMODE. Changes the row size of the console window. Ex.  TEXTMODE 50
   Typically 25, 30, 43, 50 but Windows will accept other values but be reasonable.
@@ -156,6 +162,7 @@ CRLF$ ....... produces the same thing as CHR$(13)+CHR$(10) but less typing
 
 --------- Additional Functions added to CHIPMUNK 1.0 by Kevin Diggins  -----------------
 
+
 * Added INT function           ' how was this missing?  :-)
 
 * Added MyNum = RND            ' returns a random number between 0 and 1
@@ -223,9 +230,15 @@ CRLF$ ....... produces the same thing as CHR$(13)+CHR$(10) but less typing
 * Added A$ = WINDIR$     returns the Windows OS directory (folder)
 
 
+
+
+
+
+
+
 **************************************************
   Original Chipmunk BASIC 1.0  by David Gillespie
-         (minor changes by Kevin Diggins)
+      (with minor changes by Kevin Diggins)
 **************************************************
 
 COMMANDS
