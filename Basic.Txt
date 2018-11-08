@@ -5,7 +5,7 @@
 			  	   for MS-Windows 
                               By Kevin Diggins (2018)
 
-	      This runs on 32 and 64 bit Windows systems equally well )
+	      This runs on 32 and 64 bit Windows systems equally well 
 
 *******************************************************************************
 * At startup, a Windows OpenFileName dialog box will open for loading a program.
