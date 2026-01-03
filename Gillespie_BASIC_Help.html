@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gillespie BASIC v1.58 Help</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            line-height: 1.6;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: #242424;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            overflow: hidden;
+        }
+
+        header {
+            background: linear-gradient(135deg, #2c5282 0%, #1a365d 100%);
+            padding: 30px;
+            text-align: center;
+            border-bottom: 3px solid #4299e1;
+        }
+
+        h1 {
+            color: #fff;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .version {
+            color: #90cdf4;
+            font-size: 1.1em;
+        }
+
+        nav {
+            background: #2d2d2d;
+            padding: 15px 30px;
+            border-bottom: 1px solid #404040;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        nav a {
+            color: #4299e1;
+            text-decoration: none;
+            margin-right: 20px;
+            font-weight: 500;
+            transition: color 0.3s;
+        }
+
+        nav a:hover {
+            color: #63b3ed;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        section {
+            margin-bottom: 40px;
+            padding: 20px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            border-left: 4px solid #4299e1;
+        }
+
+        h2 {
+            color: #63b3ed;
+            margin-bottom: 15px;
+            font-size: 1.8em;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #3a3a3a;
+        }
+
+        h3 {
+            color: #90cdf4;
+            margin: 20px 0 10px 0;
+            font-size: 1.3em;
+        }
+
+        code {
+            background: #1a1a1a;
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #68d391;
+            font-family: 'Courier New', monospace;
+        }
+
+        pre {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 10px 0;
+            border: 1px solid #404040;
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+        }
+
+        ul, ol {
+            margin-left: 25px;
+            margin-top: 10px;
+        }
+
+        li {
+            margin: 8px 0;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .feature-card {
+            background: #323232;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #404040;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-2px);
+            border-color: #4299e1;
+        }
+
+        .feature-card h4 {
+            color: #4299e1;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+            background: #323232;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        th {
+            background: #3a3a3a;
+            color: #90cdf4;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+
+        td {
+            padding: 10px 12px;
+            border-top: 1px solid #404040;
+        }
+
+        tr:hover {
+            background: #2d2d2d;
+        }
+
+        .highlight {
+            background: #2c5282;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 15px 0;
+            border-left: 4px solid #4299e1;
+        }
+
+        footer {
+            background: #2d2d2d;
+            padding: 20px;
+            text-align: center;
+            color: #888;
+            border-top: 1px solid #404040;
+        }
+
+        .keyword {
+            color: #f6ad55;
+            font-weight: 600;
+        }
+
+        .string {
+            color: #68d391;
+        }
+
+        .comment {
+            color: #718096;
+            font-style: italic;
+        }
+
+        a {
+            color: #4299e1;
+        }
+
+        a:hover {
+            color: #63b3ed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Gillespie BASIC</h1>
+            <p class="version"> by Kevin Diggins </p>
+            <p class="version">First Release   (2018)</p>
+            <p class="version">Current Release (2026)</p>
+            <p class="version">Version 1.58 for Windows (2026)</p>
+            <p style="margin-top: 10px; color: #90cdf4;">Based on Chipmunk Basic 1.0 by Dave Gillespie</p>
+        </header>
+
+        <nav>
+            <a href="#overview">Overview</a>
+            <a href="#features">Features</a>
+            <a href="#functions">Functions</a>
+            <a href="#commands">Commands</a>
+            <a href="#examples">Examples</a>
+        </nav>
+
+        <div class="content">
+            <section id="overview">
+                <h2>Overview</h2>
+                <p>Gillespie BASIC is an enhanced interpreter based on Chipmunk Basic, featuring modern improvements including:</p>
+                <ul>
+                    <li><strong>Fast hash-based keyword lookup</strong> - Significantly improved parsing performance</li>
+                    <li><strong>User-defined functions</strong> - Create your own functions with up to 10 parameters</li>
+                    <li><strong>Enhanced USING$() formatting</strong> - Advanced number formatting with BCX's implementation</li>
+                    <li><strong>Memory safety improvements</strong> - Enhanced stability and reliability</li>
+                    <li><strong>Full Win32 API access</strong> - Direct Windows programming capabilities</li>
+                </ul>
+
+                <div class="highlight">
+                    <strong>Note:</strong> User-defined functions must be read (typed or loaded) before they can be used in your program.
+                </div>
+            </section>
+
+            <section id="features">
+                <h2>Key Features</h2>
+                
+                <div class="feature-grid">
+                    <a href="#user-functions" style="text-decoration: none;">
+                        <div class="feature-card">
+                            <h4>User-Defined Functions</h4>
+                            <p>Create custom functions with parameters and return values (numeric or string).</p>
+                        </div>
+                    </a>
+                    
+                    <a href="#file-ops" style="text-decoration: none;">
+                        <div class="feature-card">
+                            <h4>File Operations</h4>
+                            <p>Open, read, write, and manipulate files with text and binary modes.</p>
+                        </div>
+                    </a>
+                    
+                    <a href="#string-funcs" style="text-decoration: none;">
+                        <div class="feature-card">
+                            <h4>String Functions</h4>
+                            <p>Comprehensive string manipulation including searching, replacing, and formatting.</p>
+                        </div>
+                    </a>
+                    
+                    <a href="#math-funcs" style="text-decoration: none;">
+                        <div class="feature-card">
+                            <h4>Math Functions</h4>
+                            <p>Trigonometric, logarithmic, and rounding operations.</p>
+                        </div>
+                    </a>
+                    
+                    <a href="#console-control" style="text-decoration: none;">
+                        <div class="feature-card">
+                            <h4>Console Control</h4>
+                            <p>Control colors, cursor position, and text mode settings.</p>
+                        </div>
+                    </a>
+                    
+                    <a href="#dialogs" style="text-decoration: none;">
+                        <div class="feature-card">
+                            <h4>Interactive Dialogs</h4>
+                            <p>Message boxes, input boxes, and confirmation dialogs.</p>
+                        </div>
+                    </a>
+                </div>
+
+                <h3 id="user-functions">User-Defined Functions</h3>
+                <pre><code><span class="comment">' Define a temperature conversion function</span>
+<span class="keyword">FUNCTION</span> FtoC(F) = (F - 32) * 5 / 9
+
+<span class="comment">' Use the function</span>
+<span class="keyword">PRINT</span> <span class="string">"32°F = "</span>; FtoC(32); <span class="string">"°C"</span>
+
+<span class="comment">' String function example</span>
+<span class="keyword">FUNCTION</span> Greet$(Name$) = <span class="string">"Hello, "</span> + Name$ + <span class="string">"!"</span>
+<span class="keyword">PRINT</span> Greet$(<span class="string">"World"</span>)</code></pre>
+            </section>
+
+            <section id="functions">
+                <h2>Built-in Functions</h2>
+
+                <h3 id="math-funcs">Mathematical Functions</h3>
+                <table>
+                    <tr>
+                        <th>Function</th>
+                        <th>Description</th>
+                        <th>Example</th>
+                    </tr>
+                    <tr>
+                        <td><code>ABS(x)</code></td>
+                        <td>Absolute value</td>
+                        <td><code>ABS(-5)</code> = 5</td>
+                    </tr>
+                    <tr>
+                        <td><code>INT(x)</code></td>
+                        <td>Integer part (floor)</td>
+                        <td><code>INT(3.7)</code> = 3</td>
+                    </tr>
+                    <tr>
+                        <td><code>SGN(x)</code></td>
+                        <td>Sign (-1, 0, or 1)</td>
+                        <td><code>SGN(-5)</code> = -1</td>
+                    </tr>
+                    <tr>
+                        <td><code>SQR(x)</code></td>
+                        <td>Square (x²)</td>
+                        <td><code>SQR(5)</code> = 25</td>
+                    </tr>
+                    <tr>
+                        <td><code>SQRT(x)</code></td>
+                        <td>Square root</td>
+                        <td><code>SQRT(16)</code> = 4</td>
+                    </tr>
+                    <tr>
+                        <td><code>ROUND(x,d)</code></td>
+                        <td>Round to d decimals</td>
+                        <td><code>ROUND(3.456,2)</code> = 3.46</td>
+                    </tr>
+                    <tr>
+                        <td><code>SIN(x)</code>, <code>COS(x)</code>, <code>TAN(x)</code></td>
+                        <td>Trigonometric (radians)</td>
+                        <td><code>SIN(PI/2)</code> = 1</td>
+                    </tr>
+                    <tr>
+                        <td><code>ATN(x)</code></td>
+                        <td>Arctangent</td>
+                        <td><code>ATN(1)</code> ≈ 0.785</td>
+                    </tr>
+                    <tr>
+                        <td><code>LOG(x)</code></td>
+                        <td>Natural logarithm</td>
+                        <td><code>LOG(2.718)</code> ≈ 1</td>
+                    </tr>
+                    <tr>
+                        <td><code>LOG10(x)</code></td>
+                        <td>Base-10 logarithm</td>
+                        <td><code>LOG10(100)</code> = 2</td>
+                    </tr>
+                    <tr>
+                        <td><code>EXP(x)</code></td>
+                        <td>e raised to x</td>
+                        <td><code>EXP(1)</code> ≈ 2.718</td>
+                    </tr>
+                    <tr>
+                        <td><code>RND</code></td>
+                        <td>Random 0 to 1</td>
+                        <td><code>INT(RND*6)+1</code> = dice</td>
+                    </tr>
+                </table>
+
+                <h3 id="string-funcs">String Functions</h3>
+                <table>
+                    <tr>
+                        <th>Function</th>
+                        <th>Description</th>
+                        <th>Example</th>
+                    </tr>
+                    <tr>
+                        <td><code>LEN(s$)</code></td>
+                        <td>String length</td>
+                        <td><code>LEN("Hello")</code> = 5</td>
+                    </tr>
+                    <tr>
+                        <td><code>LEFT$(s$,n)</code></td>
+                        <td>Left n characters</td>
+                        <td><code>LEFT$("Hello",2)</code> = "He"</td>
+                    </tr>
+                    <tr>
+                        <td><code>RIGHT$(s$,n)</code></td>
+                        <td>Right n characters</td>
+                        <td><code>RIGHT$("Hello",2)</code> = "lo"</td>
+                    </tr>
+                    <tr>
+                        <td><code>MID$(s$,p,n)</code></td>
+                        <td>Middle substring</td>
+                        <td><code>MID$("Hello",2,3)</code> = "ell"</td>
+                    </tr>
+                    <tr>
+                        <td><code>UCASE$(s$)</code></td>
+                        <td>Convert to uppercase</td>
+                        <td><code>UCASE$("hello")</code> = "HELLO"</td>
+                    </tr>
+                    <tr>
+                        <td><code>LCASE$(s$)</code></td>
+                        <td>Convert to lowercase</td>
+                        <td><code>LCASE$("HELLO")</code> = "hello"</td>
+                    </tr>
+                    <tr>
+                        <td><code>MCASE$(s$)</code></td>
+                        <td>Mixed case (title case)</td>
+                        <td><code>MCASE$("hello world")</code> = "Hello World"</td>
+                    </tr>
+                    <tr>
+                        <td><code>TRIM$(s$)</code></td>
+                        <td>Remove leading/trailing spaces</td>
+                        <td><code>TRIM$("  hi  ")</code> = "hi"</td>
+                    </tr>
+                    <tr>
+                        <td><code>LTRIM$(s$)</code></td>
+                        <td>Remove leading spaces</td>
+                        <td><code>LTRIM$("  hi")</code> = "hi"</td>
+                    </tr>
+                    <tr>
+                        <td><code>RTRIM$(s$)</code></td>
+                        <td>Remove trailing spaces</td>
+                        <td><code>RTRIM$("hi  ")</code> = "hi"</td>
+                    </tr>
+                    <tr>
+                        <td><code>INSTR(s1$,s2$)</code></td>
+                        <td>Find substring position</td>
+                        <td><code>INSTR("Hello","ll")</code> = 3</td>
+                    </tr>
+                    <tr>
+                        <td><code>STR$(n)</code></td>
+                        <td>Number to string</td>
+                        <td><code>STR$(42)</code> = "42"</td>
+                    </tr>
+                    <tr>
+                        <td><code>VAL(s$)</code></td>
+                        <td>String to number</td>
+                        <td><code>VAL("42")</code> = 42</td>
+                    </tr>
+                    <tr>
+                        <td><code>CHR$(n)</code></td>
+                        <td>ASCII code to character</td>
+                        <td><code>CHR$(65)</code> = "A"</td>
+                    </tr>
+                    <tr>
+                        <td><code>ASC(s$)</code></td>
+                        <td>Character to ASCII</td>
+                        <td><code>ASC("A")</code> = 65</td>
+                    </tr>
+                    <tr>
+                        <td><code>SPACE$(n)</code></td>
+                        <td>Generate n spaces</td>
+                        <td><code>SPACE$(5)</code> = "     "</td>
+                    </tr>
+                    <tr>
+                        <td><code>REPEAT$(s$,n)</code></td>
+                        <td>Repeat string n times</td>
+                        <td><code>REPEAT$("*",3)</code> = "***"</td>
+                    </tr>
+                    <tr>
+                        <td><code>USING$(fmt$,n)</code></td>
+                        <td>Format number</td>
+                        <td><code>USING$("###.##",3.5)</code> = "$  3.50"</td>
+                    </tr>
+                    <tr>
+                        <td><code>HEX$(n)</code></td>
+                        <td>Convert to hexadecimal</td>
+                        <td><code>HEX$(255)</code> = "FF"</td>
+                    </tr>
+                    <tr>
+                        <td><code>ENCLOSE$(s$)</code></td>
+                        <td>Add quotes</td>
+                        <td><code>ENCLOSE$("hi")</code> = "\"hi\""</td>
+                    </tr>
+                </table>
+
+                <h3>Enhanced String Functions</h3>
+                <table>
+                    <tr>
+                        <th>Function</th>
+                        <th>Description</th>
+                    </tr>
+                    <tr>
+                        <td><code>EXTRACT$(s$,delim$)</code></td>
+                        <td>Extract text before delimiter</td>
+                    </tr>
+                    <tr>
+                        <td><code>REMAIN$(s$,delim$)</code></td>
+                        <td>Get text after delimiter</td>
+                    </tr>
+                    <tr>
+                        <td><code>RETAIN$(s$,valid$)</code></td>
+                        <td>Keep only valid characters</td>
+                    </tr>
+                    <tr>
+                        <td><code>REMOVE$(s$,text$)</code></td>
+                        <td>Remove all occurrences</td>
+                    </tr>
+                    <tr>
+                        <td><code>IREPLACE$(s$,old$,new$)</code></td>
+                        <td>Case-insensitive replace</td>
+                    </tr>
+                    <tr>
+                        <td><code>LIKE(text$,pattern$)</code></td>
+                        <td>Wildcard matching (* and ?)</td>
+                    </tr>
+                    <tr>
+                        <td><code>VERIFY(s$,allowed$)</code></td>
+                        <td>Check if all chars are valid</td>
+                    </tr>
+                </table>
+
+                <h3>System Functions</h3>
+                <table>
+                    <tr>
+                        <th>Function</th>
+                        <th>Description</th>
+                    </tr>
+                    <tr>
+                        <td><code>TIME$</code></td>
+                        <td>Current time (HH:MM:SS)</td>
+                    </tr>
+                    <tr>
+                        <td><code>DATE$</code></td>
+                        <td>Current date (MM/DD/YYYY)</td>
+                    </tr>
+                    <tr>
+                        <td><code>TIMER</code></td>
+                        <td>Milliseconds since startup</td>
+                    </tr>
+                    <tr>
+                        <td><code>INKEY$</code></td>
+                        <td>Get keyboard input (non-blocking)</td>
+                    </tr>
+                    <tr>
+                        <td><code>KEYPRESS</code></td>
+                        <td>Wait for and return key code</td>
+                    </tr>
+                    <tr>
+                        <td><code>CURDIR$</code></td>
+                        <td>Current directory</td>
+                    </tr>
+                    <tr>
+                        <td><code>WINDIR$</code></td>
+                        <td>Windows directory</td>
+                    </tr>
+                    <tr>
+                        <td><code>SYSDIR$</code></td>
+                        <td>System directory</td>
+                    </tr>
+                    <tr>
+                        <td><code>TEMPDIR$</code></td>
+                        <td>Temporary files directory</td>
+                    </tr>
+                    <tr>
+                        <td><code>ENVIRON$(var$)</code></td>
+                        <td>Environment variable value</td>
+                    </tr>
+                    <tr>
+                        <td><code>PI</code></td>
+                        <td>π constant (3.14159...)</td>
+                    </tr>
+                    <tr>
+                        <td><code>TRUE</code></td>
+                        <td>Boolean true (-1)</td>
+                    </tr>
+                    <tr>
+                        <td><code>FALSE</code></td>
+                        <td>Boolean false (0)</td>
+                    </tr>
+                    <tr>
+                        <td><code>CRLF$</code></td>
+                        <td>Carriage return + line feed</td>
+                    </tr>
+                </table>
+
+                <h3>File Functions</h3>
+                <table>
+                    <tr>
+                        <th>Function</th>
+                        <th>Description</th>
+                    </tr>
+                    <tr>
+                        <td><code>EXIST(filename$)</code></td>
+                        <td>Check if file exists</td>
+                    </tr>
+                    <tr>
+                        <td><code>LOF(filename$)</code></td>
+                        <td>Get file size in bytes</td>
+                    </tr>
+                    <tr>
+                        <td><code>EOF(filenum)</code></td>
+                        <td>Check if at end of file</td>
+                    </tr>
+                    <tr>
+                        <td><code>FINDFIRST$(pattern$)</code></td>
+                        <td>Find first matching file</td>
+                    </tr>
+                    <tr>
+                        <td><code>FINDNEXT$</code></td>
+                        <td>Find next matching file</td>
+                    </tr>
+                </table>
+
+                <h3 id="dialogs">Dialog Functions</h3>
+                <table>
+                    <tr>
+                        <th>Function</th>
+                        <th>Description</th>
+                    </tr>
+                    <tr>
+                        <td><code>INPUTBOX$(title$,prompt$,default$)</code></td>
+                        <td>Get user input via dialog</td>
+                    </tr>
+                    <tr>
+                        <td><code>YN_CANCEL(title$,msg$)</code></td>
+                        <td>Yes/No/Cancel dialog (returns 1/2/3)</td>
+                    </tr>
+                </table>
+            </section>
+
+            <section id="commands">
+                <h2>Commands</h2>
+
+                <h3>Program Control</h3>
+                <table>
+                    <tr>
+                        <th>Command</th>
+                        <th>Description</th>
+                    </tr>
+                    <tr>
+                        <td><code>RUN [line]</code></td>
+                        <td>Run program from line (or beginning)</td>
+                    </tr>
+                    <tr>
+                        <td><code>STOP</code></td>
+                        <td>Stop program execution</td>
+                    </tr>
+                    <tr>
+                        <td><code>END</code></td>
+                        <td>End program</td>
+                    </tr>
+                    <tr>
+                        <td><code>GOTO line</code></td>
+                        <td>Jump to line number</td>
+                    </tr>
+                    <tr>
+                        <td><code>GOSUB line</code></td>
+                        <td>Call subroutine</td>
+                    </tr>
+                    <tr>
+                        <td><code>RETURN</code></td>
+                        <td>Return from subroutine</td>
+                    </tr>
+                    <tr>
+                        <td><code>ON n GOTO/GOSUB line1,line2...</code></td>
+                        <td>Computed jump</td>
+                    </tr>
+                </table>
+
+                <h3>Conditionals</h3>
+                <pre><code><span class="keyword">IF</span> condition <span class="keyword">THEN</span> statement
+<span class="keyword">IF</span> condition <span class="keyword">THEN</span> line_number
+<span class="keyword">IF</span> condition <span class="keyword">THEN</span> statements <span class="keyword">ELSE</span> statements</code></pre>
+
+                <h3>Loops</h3>
+                <pre><code><span class="comment">' FOR-NEXT loop</span>
+<span class="keyword">FOR</span> i = 1 <span class="keyword">TO</span> 10 <span class="keyword">STEP</span> 2
+    <span class="keyword">PRINT</span> i
+<span class="keyword">NEXT</span> i
+
+<span class="comment">' WHILE-WEND loop</span>
+<span class="keyword">WHILE</span> condition
+    statements
+<span class="keyword">WEND</span>
+
+<span class="comment">' DO-LOOP variants</span>
+<span class="keyword">DO WHILE</span> condition
+    statements
+<span class="keyword">LOOP</span>
+
+<span class="keyword">DO</span>
+    statements
+<span class="keyword">LOOP UNTIL</span> condition</code></pre>
+
+                <h3 id="console-control">Input/Output</h3>
+                <table>
+                    <tr>
+                        <th>Command</th>
+                        <th>Description</th>
+                    </tr>
+                    <tr>
+                        <td><code>PRINT expr [;expr...]</code></td>
+                        <td>Display output</td>
+                    </tr>
+                    <tr>
+                        <td><code>INPUT prompt$; var [,var...]</code></td>
+                        <td>Get user input</td>
+                    </tr>
+                    <tr>
+                        <td><code>CLS</code></td>
+                        <td>Clear screen</td>
+                    </tr>
+                    <tr>
+                        <td><code>LOCATE row, col</code></td>
+                        <td>Position cursor</td>
+                    </tr>
+                    <tr>
+                        <td><code>COLOR fg, bg</code></td>
+                        <td>Set text colors (0-15)</td>
+                    </tr>
+                    <tr>
+                        <td><code>SETCURSOR flag</code></td>
+                        <td>Show/hide cursor (1/0)</td>
+                    </tr>
+                    <tr>
+                        <td><code>TEXTMODE lines</code></td>
+                        <td>Set console buffer size</td>
+                    </tr>
+                    <tr>
+                        <td><code>MSGBOX title$, message$</code></td>
+                        <td>Show message box</td>
+                    </tr>
+                    <tr>
+                        <td><code>OK_CANCEL title$, message$</code></td>
+                        <td>Show OK/Cancel dialog</td>
+                    </tr>
+                </table>
+
+                <h3 id="file-ops">File Operations</h3>
+                <pre><code><span class="comment">' Open files</span>
+<span class="keyword">OPEN</span> <span class="string">"file.txt"</span> <span class="keyword">FOR INPUT AS</span> 1
+<span class="keyword">OPEN</span> <span class="string">"file.txt"</span> <span class="keyword">FOR OUTPUT AS</span> 1
+<span class="keyword">OPEN</span> <span class="string">"file.txt"</span> <span class="keyword">FOR APPEND AS</span> 1
+<span class="keyword">OPEN</span> <span class="string">"file.dat"</span> <span class="keyword">FOR BINARY AS</span> 1
+
+<span class="comment">' Read/Write text</span>
+<span class="keyword">LINE INPUT</span> 1, text$
+<span class="keyword">FPRINT</span> 1, <span class="string">"data"</span>
+
+<span class="comment">' Binary operations</span>
+<span class="keyword">GET</span> 1, buffer$, numbytes
+<span class="keyword">PUT</span> 1, data$, numbytes
+<span class="keyword">SEEK</span> 1, position
+
+<span class="comment">' File management</span>
+<span class="keyword">CLOSE</span> 1
+<span class="keyword">REWIND</span> 1
+<span class="keyword">KILL</span> <span class="string">"file.txt"</span></code></pre>
+
+                <h3>Data Statements</h3>
+                <pre><code><span class="keyword">DATA</span> value1, value2, value3
+<span class="keyword">READ</span> var1, var2, var3
+<span class="keyword">RESTORE</span> [line]</code></pre>
+
+                <h3>Program Management</h3>
+                <table>
+                    <tr>
+                        <th>Command</th>
+                        <th>Description</th>
+                    </tr>
+                    <tr>
+                        <td><code>NEW</code></td>
+                        <td>
