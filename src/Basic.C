@@ -1,80 +1,128 @@
 //*****************************************************************************
-#define VERSION "Gillespie BASIC v1.56 for Windows by Kevin Diggins (2018)\n"
+#define VERSION "Gillespie BASIC v1.58 for Windows by Kevin Diggins (2026)\n"
 //              Based on Chipmunk Basic 1.0 by Dave Gillespie
+//       1.58 includes memory safety improvements by Google Gemini
+//       1.58 replaced linear token lookup with fast hash lookup by Claude
+//       1.58 Supports simple user-defined FUNCTIONS with up to 10 arguments
+//            User Functions must be read before they can be reliably used.
+//       1.58 Improved with BCX's enhanced USING$() function
 //*****************************************************************************
+#define FGCOLOR 10  //  Window Foreground Color   (14)
+#define BGCOLOR  0  //  Window Background Color   (01)
+#define KWCOLOR  9  //  Keyword highlight color
+
+#ifdef _MSC_VER
+#pragma warning(disable: 4611)  // setjmp/longjmp interaction warning - safe in C
+#pragma warning(disable: 4324)  // setjmp/longjmp interaction warning - safe in C 
+#pragma warning(disable : 4996) // deprecated GetVersionExA
+#ifndef _CRT_SECURE_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS
+#endif
+#endif
 
 #include "Basic.h"
 
-void Initialize()
+#pragma comment(lib,"kernel32.lib")
+#pragma comment(lib,"user32.lib")
+#pragma comment(lib,"shell32.lib")
+#pragma comment(lib,"comdlg32.lib")
+
+
+
+void Initialize(void)
 {
-	inbuf = (char *)calloc(MAXSTRINGVAR, 1);
-	OurLoadedFname = calloc(1024, 1);
+	InitializeKeywordHashTable();
+	G_inbuf = (char*)safe_calloc(MAXSTRINGVAR, 1);
+	OurLoadedFname = (char*)calloc(1024, 1);
 	linebase = NULL;
 	varbase = NULL;
 	loopbase = NULL;
 	exitflag = FALSE;
 	Dirtyflag = FALSE;
+	funcbase = NULL;
 	ClearAll();
 	Setup_Console();
 	printf(VERSION);
 }
 
 
-int main(int argc, char *argv[])
+char* mystrDate(char* buffer)
 {
+	time_t rawtime;
+	struct tm* timeinfo;
+
+	time(&rawtime);
+	timeinfo = localtime(&rawtime);
+
+	// Ensure we don't overflow the 11-byte expected buffer
+	strftime(buffer, 11, "%m/%d/%Y", timeinfo);
+	return buffer;
+}
+
+
+
+int main(int argc, char* argv[])
+{
+	UNREFERENCED_PARAMETER(argc);
+	UNREFERENCED_PARAMETER(argv);
 	Top_of_Jump_Buffer = NULL;
-//******************************
+	//******************************
 	Initialize();
-//******************************
+	//******************************
 	do
 	{
 		if (!Dirtyflag++)
 		{
-			strcpy(inbuf, "load");
+			//			strcpy(G_inbuf, "load");     // uncomment if you want the OpenFile to always display on Startup
 		}
 		else
 		{
 			printf("\n%s", "Ready: ");
-			GB_gets(inbuf, MAXSTRINGVAR);
+			GB_gets(G_inbuf, MAXSTRINGVAR);
 		}
 		//********************************************************************
 		//    This allows us to invoke the Windows GetFileName dialogbox
 		//********************************************************************
-		if (stricmp(inbuf, "load") == 0)
-			sprintf(inbuf, "%s%s", "load ", enc(""));
+		if (_stricmp(G_inbuf, "load") == 0)
+			sprintf(G_inbuf, "%s%s", "load ", enc(""));
 		//********************************************************************
-		ParseInput(&buf);	// buf is a tokenrec ptr
+		ParseInput(&tr_buf);	// buf is a tokenrec ptr
 
 		if (curline == 0)	// if true, then we typed an IMMEDIATE mode command
 		{
 			stmtline = NULL;	// stmtline is a global linerec ptr
-			stmttok = buf;	// stmttok is a global tokenrec ptr
+			stmttok = tr_buf;	// stmttok is a global tokenrec ptr
 			if (stmttok != NULL)
 				Execute();	// execute IMMEDIATE mode command
-			DisposeTokens(&buf);	//free some memory
+			DisposeTokens(&tr_buf);	//free some memory
 		}
-	}
-	while (!(exitflag));
-	free(inbuf);
+	} while (!(exitflag));
+	free(G_inbuf);
 	return 0;
 	//****************************************************************************
 }
 
-void ParseInput(tokenrec **buf)
+void ParseInput(tokenrec** buf)
 {
-	linerec *L1, *L2, *L3;
+	linerec* L1, * L2, * L3;
 	curline = 0;
-	strcpy(inbuf, trim(inbuf));
-	while (*inbuf != '\0' && isdigit(inbuf[0]))
+
+	// Safety check for trim output
+	char* trimmed = trim(G_inbuf);
+	if (trimmed != G_inbuf)
 	{
-		curline = curline * 10 + inbuf[0] - 48;	// parse the line number
-		strcpy(inbuf, inbuf + 1);
+		strncpy(G_inbuf, trimmed, MAXSTRINGVAR - 1);
+		G_inbuf[MAXSTRINGVAR - 1] = '\0';
 	}
-//*****************************************************************************
-//   curline contains the current line number
-//   inbuf contains the current line of code (LOC) -without- the line number
-//*****************************************************************************
-	Parse(inbuf, buf);
+
+	while (G_inbuf[0] != '\0' && isdigit((unsigned char)G_inbuf[0]))
+	{
+		curline = curline * 10 + (G_inbuf[0] - '0');
+		// FIX: Replaced strcpy with memmove for overlapping memory
+		memmove(G_inbuf, G_inbuf + 1, strlen(G_inbuf));
+	}
+
+	Parse(G_inbuf, buf);
 
 	if (curline == 0)
 		return;
@@ -102,7 +150,7 @@ void ParseInput(tokenrec **buf)
 
 	if (*buf != NULL)
 	{
-		L3 = (linerec *)calloc(sizeof(linerec), 1);
+		L3 = (linerec*)safe_calloc(1, sizeof(linerec));
 		L3->next = L1;
 		if (L2 == NULL)
 			linebase = L3;
@@ -115,513 +163,323 @@ void ParseInput(tokenrec **buf)
 	RestoreData();
 }
 
-//*****************************************************************************
+//******************************************
+//      Hash table for keyword lookup
+//******************************************
 
-void Parse(char *inbuf, tokenrec **buf)
+#define HASH_TABLE_SIZE 128
+
+typedef struct KeywordEntry
 {
-	register long i, j, k;
+	char* keyword;
+	int token_kind;
+	struct KeywordEntry* next;
+} KeywordEntry;
+
+static KeywordEntry* keyword_hash_table[HASH_TABLE_SIZE] = { 0 };
+
+// Simple hash function for keywords
+static unsigned int hash_keyword(const char* str)
+{
+	unsigned int hash = 0;
+	while (*str)
+	{
+		hash = (hash * 31 + tolower((unsigned char)*str)) % HASH_TABLE_SIZE;
+		str++;
+	}
+	return hash;
+}
+
+// Initialize keyword hash table (call once at startup)
+void InitializeKeywordHashTable(void)
+{
+	static int initialized = 0;
+	if (initialized) return;
+	initialized = 1;
+
+	// Define keyword-token pairs
+	struct
+	{
+		char* keyword;
+		int token;
+	} keywords[] =
+	{
+	  {"and", tokand}, {"or", tokor}, {"xor", tokxor}, {"not", toknot},
+	  {"mod", tokmod}, {"sqr", toksqr}, {"sqrt", toksqrt}, {"round", tokround},
+	  {"sin", toksin}, {"cos", tokcos}, {"tan", toktan}, {"atn", tokatan},
+	  {"log10", toklog10}, {"log", toklog}, {"exp", tokexp}, {"abs", tokabs},
+	  {"int", tokint}, {"sgn", toksgn}, {"keypress", tokkeypress}, {"timer", toktimer},
+	  {"rnd", tokrnd}, {"str$", tokstr_}, {"val", tokval}, {"hex$", tokhex_},
+	  {"lof", toklof}, {"like", toklike}, {"verify", tokverify}, {"exist", tokexist},
+	  {"sleep", toksleep}, {"textmode", toktextmode}, {"randomize", tokrandomize},
+	  {"setcursor", toksetcursor}, {"chr$", tokchr_}, {"time$", toktime_},
+	  {"date$", tokdate_}, {"inkey$", tokinkey_}, {"curdir$", tokcurdir_},
+	  {"windir$", tokwindir_}, {"sysdir$", toksysdir_}, {"tempdir$", toktempdir_},
+	  {"trim$", toktrim_}, {"environ$", tokenviron_}, {"ltrim$", tokltrim_},
+	  {"rtrim$", tokrtrim_}, {"ucase$", tokucase_}, {"enc$", tokenc_},
+	  {"enclose$", tokenc_}, {"findfirst$", tokfindfirst_}, {"findnext$", tokfindnext_},
+	  {"lcase$", toklcase_}, {"mcase$", tokmcase_}, {"space$", tokspace_},
+	  {"left$", tokleft_}, {"right$", tokright_}, {"repeat$", tokrepeat_},
+	  {"extract$", tokextract_}, {"instr", tokinstr}, {"remain$", tokremain_},
+	  {"retain$", tokretain_}, {"remove$", tokremove_}, {"ireplace$", tokireplace_},
+	  {"inputbox$", tokinputbox}, {"ok_cancel", tokokcancel}, {"yn_cancel", tokyncancel},
+	  {"using$", tokusing_}, {"asc", tokasc}, {"len", toklen}, {"mid$", tokmid_},
+	  {"let", toklet}, {"print", tokprint}, {"input", tokinput}, {"output", tokoutput},
+	  {"fprint", tokfprint}, {"line", tokflineinput}, {"get", tokget}, {"put", tokput},
+	  {"seek", tokseek}, {"true", toktrue}, {"false", tokfalse}, {"pi", tokpi},
+	  {"crlf$", tokcrlf_}, {"eof", tokeof}, {"close", tokclose}, {"rewind", tokrewind},
+	  {"goto", tokgoto}, {"if", tokif}, {"end", tokend}, {"stop", tokstop},
+	  {"for", tokfor}, {"next", toknext}, {"while", tokwhile}, {"wend", tokwend},
+	  {"do", tokdo}, {"loop", tokloop}, {"until", tokuntil}, {"gosub", tokgosub},
+	  {"return", tokreturn}, {"read", tokread}, {"data", tokdata}, {"restore", tokrestore},
+	  {"locate", toklocate}, {"gotoxy", tokgotoxy}, {"color", tokcolor}, {"on", tokon},
+	  {"dim", tokdim}, {"list", toklist}, {"run", tokrun}, {"cls", tokcls},
+	  {"msgbox", tokmsgbox}, {"new", toknew}, {"load", tokload}, {"shell", tokshell},
+	  {"eval", tokeval}, {"kill", tokkill}, {"open", tokopen}, {"as", tokas},
+	  {"append", tokappend}, {"binary", tokbinary}, {"merge", tokmerge},
+	  {"save", toksave}, {"bye", tokbye}, {"quit", tokbye}, {"exit", tokbye},
+	  {"del", tokdel}, {"renum", tokrenum}, {"then", tokthen}, {"else", tokelse},
+	  {"to", tokto}, {"step", tokstep}, {"clear", tokclear}, {"swap", tokswap},
+	  {"rem", tokrem},{"function", tokfunction},
+	  {NULL, 0}
+	};
+
+	// Insert keywords into hash table
+	for (int i = 0; keywords[i].keyword != NULL; i++)
+	{
+		unsigned int hash = hash_keyword(keywords[i].keyword);
+		KeywordEntry* entry = (KeywordEntry*)malloc(sizeof(KeywordEntry));
+		entry->keyword = keywords[i].keyword;
+		entry->token_kind = keywords[i].token;
+		entry->next = keyword_hash_table[hash];
+		keyword_hash_table[hash] = entry;
+	}
+}
+
+// Fast keyword lookup using hash table
+static int LookupKeyword(const char* token)
+{
+	unsigned int hash = hash_keyword(token);
+	KeywordEntry* entry = keyword_hash_table[hash];
+
+	while (entry)
+	{
+		if (_stricmp(entry->keyword, token) == 0)
+		{
+			return entry->token_kind;
+		}
+		entry = entry->next;
+	}
+	return -1; // Not a keyword
+}
+
+// Optimized number parsing
+static double FastParseNumber(const char* str, int* chars_consumed)
+{
+	double n = 0.0;
+	double d = 1.0;
+	double d1 = 1.0;
+	int i = 0;
+
+	// Parse integer and decimal parts
+	while (str[i] && (isdigit((unsigned char)str[i]) || (str[i] == '.' && d1 == 1)))
+	{
+		if (str[i] == '.')
+		{
+			d1 = 10.0;
+		}
+		else
+		{
+			n = n * 10 + (str[i] - '0');
+			d *= d1;
+		}
+		i++;
+	}
+	n /= d;
+
+	// Parse scientific notation
+	if (str[i] && (str[i] == 'E' || str[i] == 'e'))
+	{
+		i++;
+		d1 = 10.0;
+		if (str[i] && (str[i] == '-' || str[i] == '+'))
+		{
+			if (str[i] == '-') d1 = 0.1;
+			i++;
+		}
+		int exp = 0;
+		while (str[i] && isdigit((unsigned char)str[i]))
+		{
+			exp = exp * 10 + (str[i] - '0');
+			i++;
+		}
+		for (int k = 0; k < exp; k++)
+		{
+			n *= d1;
+		}
+	}
+
+	*chars_consumed = i;
+	return n;
+}
+
+// Optimized Parse function with reduced allocations
+void Parse(char* inbuf, tokenrec** buf)
+{
+	long i = 0;
+	int len = (int)strlen(inbuf);
 	char token[TOK_LENGTH + 1];
 	char ch;
-	double n, d, d1;
-	tokenrec *t, *tptr;
-	varrec *v;
+	tokenrec* t, * tptr;
+	varrec* v;
 
 	tptr = NULL;
 	*buf = NULL;
-	i = 1;
 
-	do
+	while (i < len)
 	{
-		ch = ' ';
-		while (i <= strlen(inbuf) && ch == ' ')
+		// Skip whitespace
+		while (i < len && inbuf[i] == ' ') i++;
+		if (i >= len) break;
+
+		ch = inbuf[i++];
+
+		// Allocate token
+		t = (tokenrec*)calloc(sizeof(tokenrec), 1);
+		if (tptr == NULL)
+			*buf = t;
+		else
+			tptr->next = t;
+		tptr = t;
+		t->next = NULL;
+
+		// Single-character tokens
+		if (ch == '"')
 		{
-			ch = inbuf[i - 1];
-			i++;
-		}
-		if (ch != ' ')
-		{
-			t = (tokenrec *)calloc(sizeof(tokenrec), 1);
-			if (tptr == NULL)
-				*buf = t;
-			else
-				tptr->next = t;
-			tptr = t;
-			t->next = NULL;
-			switch (ch)
+			t->kind = tokstr;
+			t->sp = (char*)calloc(MAXSTRINGVAR, 1);
+			int j = 0;
+			while (i < len && inbuf[i] != ch && j < MAXSTRINGVAR - 1)
 			{
-				case '"':
-					t->kind = tokstr;
-					t->sp = (char *)calloc(MAXSTRINGVAR, 1);
-					j = 0;
+				t->sp[j++] = inbuf[i++];
+			}
+			t->sp[j] = '\0';
+			if (i < len) i++; // Skip closing quote
+		}
+		else if (ch == 39)   // REM comment
+		{
+			t->kind = tokrem;
+			t->sp = (char*)calloc(MAXSTRINGVAR, 1);
+			strncpy(t->sp, inbuf + i, MAXSTRINGVAR - 1);
+			break; // Rest of line is comment
+		}
+		else if (ch == '+') t->kind = tokplus;
+		else if (ch == '-') t->kind = tokminus;
+		else if (ch == '*') t->kind = toktimes;
+		else if (ch == '/') t->kind = tokdiv;
+		else if (ch == '^') t->kind = tokup;
+		else if (ch == '(' || ch == '[') t->kind = toklp;
+		else if (ch == ')' || ch == ']') t->kind = tokrp;
+		else if (ch == ',') t->kind = tokcomma;
+		else if (ch == ';') t->kind = toksemi;
+		else if (ch == ':') t->kind = tokcolon;
+		else if (ch == '?') t->kind = tokprint;
+		else if (ch == '=') t->kind = tokeq;
+		else if (ch == '<')
+		{
+			if (i < len && inbuf[i] == '=')
+			{
+				t->kind = tokle;
+				i++;
+			}
+			else if (i < len && inbuf[i] == '>')
+			{
+				t->kind = tokne;
+				i++;
+			}
+			else t->kind = toklt;
+		}
+		else if (ch == '>')
+		{
+			if (i < len && inbuf[i] == '=')
+			{
+				t->kind = tokge;
+				i++;
+			}
+			else t->kind = tokgt;
+		}
+		else if (isalpha(ch))
+		{
+			// Parse identifier/keyword
+			i--;
+			int j = 0;
+			while (i < len && (inbuf[i] == '$' || inbuf[i] == '_' || isalnum(inbuf[i])) && j < TOK_LENGTH)
+			{
+				token[j++] = inbuf[i++];
+			}
+			token[j] = '\0';
 
-					while (i <= strlen(inbuf) && inbuf[i - 1] != ch)
+			// Try keyword lookup first
+			int keyword_token = LookupKeyword(token);
+			if (keyword_token != -1)
+			{
+				t->kind = keyword_token;
+				// Handle REM specially
+				if (keyword_token == tokrem)
+				{
+					t->sp = (char*)calloc(MAXSTRINGVAR, 1);
+					strncpy(t->sp, inbuf + i, MAXSTRINGVAR - 1);
+					break;
+				}
+			}
+			else
+			{
+				// It's a variable
+				t->kind = tokvar;
+				v = varbase;
+				while (v != NULL && _stricmp(v->name, token))
+					v = v->next;
+				if (v == NULL)
+				{
+					v = (varrec*)calloc(sizeof(varrec), 1);
+					v->next = varbase;
+					varbase = v;
+					strcpy(v->name, token);
+					v->numdims = 0;
+					if (token[j - 1] == '$')
 					{
-						j++;
-						t->sp[j - 1] = inbuf[i - 1];
-						i++;
-					}
-					t->sp[j] = '\0';
-					i++;
-					break;
-
-//**************************************************************************************
-				case 39:	//   39 = the REM single apostrophe character: '
-					t->kind = tokrem;
-					t->sp = (char *)calloc(MAXSTRINGVAR, 1);
-					sprintf(t->sp, "%.*s", (int)(strlen(inbuf) - i + 1), inbuf + i - 1);
-					i = strlen(inbuf) + 1;
-					break;
-//**************************************************************************************
-				case '+':
-					t->kind = tokplus;
-					break;
-
-				case '-':
-					t->kind = tokminus;
-					break;
-
-				case '*':
-					t->kind = toktimes;
-					break;
-
-				case '/':
-					t->kind = tokdiv;
-					break;
-
-				case '^':
-					t->kind = tokup;
-					break;
-
-				case '(':
-				case '[':
-					t->kind = toklp;
-					break;
-
-				case ')':
-				case ']':
-					t->kind = tokrp;
-					break;
-
-				case ',':
-					t->kind = tokcomma;
-					break;
-
-				case ';':
-					t->kind = toksemi;
-					break;
-
-				case ':':
-					t->kind = tokcolon;
-					break;
-
-				case '?':
-					t->kind = tokprint;
-					break;
-
-				case '=':
-					t->kind = tokeq;
-					break;
-
-				case '<':
-					if (i <= strlen(inbuf) && inbuf[i - 1] == '=')
-					{
-						t->kind = tokle;
-						i++;
-					}
-					else if (i <= strlen(inbuf) && inbuf[i - 1] == '>')
-					{
-						t->kind = tokne;
-						i++;
-					}
-					else
-						t->kind = toklt;
-					break;
-
-				case '>':
-					if (i <= strlen(inbuf) && inbuf[i - 1] == '=')
-					{
-						t->kind = tokge;
-						i++;
-					}
-					else
-						t->kind = tokgt;
-					break;
-
-				default:
-					if (isalpha(ch))
-					{
-						i--;
-						j = 0;
-						token[TOK_LENGTH] = '\0';
-						while (i <= strlen(inbuf) && (inbuf[i - 1] == '$' || inbuf[i - 1] == '_' || isalnum(inbuf[i - 1])))
-						{
-							if (j < TOK_LENGTH)
-							{
-								j++;
-								token[j - 1] = inbuf[i - 1];
-							}
-							i++;
-						}
-						token[j] = '\0';
-
-						if (!stricmp(token, "and"))
-							t->kind = tokand;
-						else if (!stricmp(token, "or"))
-							t->kind = tokor;
-						else if (!stricmp(token, "xor"))
-							t->kind = tokxor;
-						else if (!stricmp(token, "not"))
-							t->kind = toknot;
-						else if (!stricmp(token, "mod"))
-							t->kind = tokmod;
-						else if (!stricmp(token, "sqr"))
-							t->kind = toksqr;
-						else if (!stricmp(token, "sqrt"))
-							t->kind = toksqrt;
-						else if (!stricmp(token, "round"))
-							t->kind = tokround;
-						else if (!stricmp(token, "sin"))
-							t->kind = toksin;
-						else if (!stricmp(token, "cos"))
-							t->kind = tokcos;
-						else if (!stricmp(token, "tan"))
-							t->kind = toktan;
-						else if (!stricmp(token, "atn"))
-							t->kind = tokatan;
-						else if (!stricmp(token, "log10"))
-							t->kind = toklog10;
-						else if (!stricmp(token, "log"))
-							t->kind = toklog;
-						else if (!stricmp(token, "exp"))
-							t->kind = tokexp;
-						else if (!stricmp(token, "abs"))
-							t->kind = tokabs;
-						else if (!stricmp(token, "int"))
-							t->kind = tokint;
-						else if (!stricmp(token, "sgn"))
-							t->kind = toksgn;
-						else if (!stricmp(token, "keypress"))
-							t->kind = tokkeypress;
-						else if (!stricmp(token, "timer"))
-							t->kind = toktimer;
-						else if (!stricmp(token, "rnd"))
-							t->kind = tokrnd;
-						else if (!stricmp(token, "str$"))
-							t->kind = tokstr_;
-						else if (!stricmp(token, "val"))
-							t->kind = tokval;
-						else if (!stricmp(token, "hex$"))
-							t->kind = tokhex_;
-						else if (!stricmp(token, "lof"))
-							t->kind = toklof;
-						else if (!stricmp(token, "like"))
-							t->kind = toklike;
-						else if (!stricmp(token, "verify"))
-							t->kind = tokverify;
-						else if (!stricmp(token, "exist"))
-							t->kind = tokexist;
-						else if (!stricmp(token, "sleep"))
-							t->kind = toksleep;
-						else if (!stricmp(token, "textmode"))
-							t->kind = toktextmode;
-						else if (!stricmp(token, "randomize"))
-							t->kind = tokrandomize;
-						else if (!stricmp(token, "setcursor"))
-							t->kind = toksetcursor;
-						else if (!stricmp(token, "chr$"))
-							t->kind = tokchr_;
-						else if (!stricmp(token, "time$"))
-							t->kind = toktime_;
-						else if (!stricmp(token, "date$"))
-							t->kind = tokdate_;
-						else if (!stricmp(token, "inkey$"))
-							t->kind = tokinkey_;
-						else if (!stricmp(token, "curdir$"))
-							t->kind = tokcurdir_;
-						else if (!stricmp(token, "windir$"))
-							t->kind = tokwindir_;
-						else if (!stricmp(token, "sysdir$"))
-							t->kind = toksysdir_;
-						else if (!stricmp(token, "tempdir$"))
-							t->kind = toktempdir_;
-						else if (!stricmp(token, "trim$"))
-							t->kind = toktrim_;
-						else if (!stricmp(token, "environ$"))
-							t->kind = tokenviron_;
-						else if (!stricmp(token, "ltrim$"))
-							t->kind = tokltrim_;
-						else if (!stricmp(token, "rtrim$"))
-							t->kind = tokrtrim_;
-						else if (!stricmp(token, "ucase$"))
-							t->kind = tokucase_;
-						else if (!stricmp(token, "enc$"))
-							t->kind = tokenc_;
-						else if (!stricmp(token, "enclose$"))
-							t->kind = tokenc_;
-						else if (!stricmp(token, "findfirst$"))
-							t->kind = tokfindfirst_;
-						else if (!stricmp(token, "findnext$"))
-							t->kind = tokfindnext_;
-						else if (!stricmp(token, "lcase$"))
-							t->kind = toklcase_;
-						else if (!stricmp(token, "mcase$"))
-							t->kind = tokmcase_;
-						else if (!stricmp(token, "space$"))
-							t->kind = tokspace_;
-						else if (!stricmp(token, "left$"))
-							t->kind = tokleft_;
-						else if (!stricmp(token, "right$"))
-							t->kind = tokright_;
-						else if (!stricmp(token, "repeat$"))
-							t->kind = tokrepeat_;
-						else if (!stricmp(token, "extract$"))
-							t->kind = tokextract_;
-						else if (!stricmp(token, "instr"))
-							t->kind = tokinstr;
-						else if (!stricmp(token, "remain$"))
-							t->kind = tokremain_;
-						else if (!stricmp(token, "retain$"))
-							t->kind = tokretain_;
-						else if (!stricmp(token, "remove$"))
-							t->kind = tokremove_;
-						else if (!stricmp(token, "ireplace$"))
-							t->kind = tokireplace_;
-						else if (!stricmp(token, "inputbox$"))
-							t->kind = tokinputbox;
-						else if (!stricmp(token, "ok_cancel"))
-							t->kind = tokokcancel;
-						else if (!stricmp(token, "yn_cancel"))
-							t->kind = tokyncancel;
-						else if (!stricmp(token, "using$"))
-							t->kind = tokusing_;
-						else if (!stricmp(token, "asc"))
-							t->kind = tokasc;
-						else if (!stricmp(token, "len"))
-							t->kind = toklen;
-						else if (!stricmp(token, "mid$"))
-							t->kind = tokmid_;
-						else if (!stricmp(token, "let"))
-							t->kind = toklet;
-						else if (!stricmp(token, "print"))
-							t->kind = tokprint;
-						else if (!stricmp(token, "input"))
-							t->kind = tokinput;
-						else if (!stricmp(token, "output"))
-							t->kind = tokoutput;
-						else if (!stricmp(token, "fprint"))
-							t->kind = tokfprint;
-						else if (!stricmp(token, "line"))
-							t->kind = tokflineinput;
-						else if (!stricmp(token, "get"))
-							t->kind = tokget;
-						else if (!stricmp(token, "put"))
-							t->kind = tokput;
-						else if (!stricmp(token, "seek"))
-							t->kind = tokseek;
-						else if (!stricmp(token, "true"))
-							t->kind = toktrue;
-						else if (!stricmp(token, "false"))
-							t->kind = tokfalse;
-						else if (!stricmp(token, "pi"))
-							t->kind = tokpi;
-						else if (!stricmp(token, "crlf$"))
-							t->kind = tokcrlf_;
-						else if (!stricmp(token, "eof"))
-							t->kind = tokeof;
-						else if (!stricmp(token, "close"))
-							t->kind = tokclose;
-						else if (!stricmp(token, "rewind"))
-							t->kind = tokrewind;
-						else if (!stricmp(token, "goto"))
-							t->kind = tokgoto;
-						else if (!stricmp(token, "if"))
-							t->kind = tokif;
-						else if (!stricmp(token, "end"))
-							t->kind = tokend;
-						else if (!stricmp(token, "stop"))
-							t->kind = tokstop;
-						else if (!stricmp(token, "for"))
-							t->kind = tokfor;
-						else if (!stricmp(token, "next"))
-							t->kind = toknext;
-						else if (!stricmp(token, "while"))
-							t->kind = tokwhile;
-						else if (!stricmp(token, "wend"))
-							t->kind = tokwend;
-						else if (!stricmp(token, "do"))
-							t->kind = tokdo;
-						else if (!stricmp(token, "loop"))
-							t->kind = tokloop;
-						else if (!stricmp(token, "until"))
-							t->kind = tokuntil;
-						else if (!stricmp(token, "gosub"))
-							t->kind = tokgosub;
-						else if (!stricmp(token, "return"))
-							t->kind = tokreturn;
-						else if (!stricmp(token, "read"))
-							t->kind = tokread;
-						else if (!stricmp(token, "data"))
-							t->kind = tokdata;
-						else if (!stricmp(token, "restore"))
-							t->kind = tokrestore;
-						else if (!stricmp(token, "locate"))
-							t->kind = toklocate;
-						else if (!stricmp(token, "gotoxy"))
-							t->kind = tokgotoxy;
-						else if (!stricmp(token, "color"))
-							t->kind = tokcolor;
-						else if (!stricmp(token, "on"))
-							t->kind = tokon;
-						else if (!stricmp(token, "dim"))
-							t->kind = tokdim;
-						else if (!stricmp(token, "list"))
-							t->kind = toklist;
-						else if (!stricmp(token, "run"))
-							t->kind = tokrun;
-						else if (!stricmp(token, "cls"))
-							t->kind = tokcls;
-						else if (!stricmp(token, "msgbox"))
-							t->kind = tokmsgbox;
-						else if (!stricmp(token, "new"))
-							t->kind = toknew;
-						else if (!stricmp(token, "load"))
-							t->kind = tokload;
-						else if (!stricmp(token, "shell"))
-							t->kind = tokshell;
-
-						else if (!stricmp(token, "eval"))
-							t->kind = tokeval;
-
-						else if (!stricmp(token, "kill"))
-							t->kind = tokkill;
-						else if (!stricmp(token, "open"))
-							t->kind = tokopen;
-						else if (!stricmp(token, "as"))
-							t->kind = tokas;
-						else if (!stricmp(token, "append"))
-							t->kind = tokappend;
-						else if (!stricmp(token, "binary"))
-							t->kind = tokbinary;
-						else if (!stricmp(token, "merge"))
-							t->kind = tokmerge;
-						else if (!stricmp(token, "save"))
-							t->kind = toksave;
-						else if (!stricmp(token, "bye"))
-							t->kind = tokbye;
-						else if (!stricmp(token, "quit"))
-							t->kind = tokbye;
-						else if (!stricmp(token, "exit"))
-							t->kind = tokbye;
-						else if (!stricmp(token, "del"))
-							t->kind = tokdel;
-						else if (!stricmp(token, "renum"))
-							t->kind = tokrenum;
-						else if (!stricmp(token, "then"))
-							t->kind = tokthen;
-						else if (!stricmp(token, "else"))
-							t->kind = tokelse;
-						else if (!stricmp(token, "to"))
-							t->kind = tokto;
-						else if (!stricmp(token, "step"))
-							t->kind = tokstep;
-						else if (!stricmp(token, "clear"))
-							t->kind = tokclear;
-						else if (!stricmp(token, "swap"))
-							t->kind = tokswap;
-						else if (!stricmp(token, "rem"))	// these will be automatically saved as single quotes
-						{
-							t->kind = tokrem;
-							t->sp = (char *)calloc(MAXSTRINGVAR, 1);
-							sprintf(t->sp, "%.*s", (int)(strlen(inbuf) - i + 1), inbuf + i - 1);
-							i = strlen(inbuf) + 1;
-						}
-
-//**********************************************************
-						else
-//          This is where we store variables (names)
-//**********************************************************
-						{
-							t->kind = tokvar;
-							v = varbase;
-							while (v != NULL && stricmp(v->name, token))	//Case Insensitive variables
-								v = v->next;
-							if (v == NULL)
-							{
-								v = (varrec *)calloc(sizeof(varrec), 1);
-								v->next = varbase;
-								varbase = v;
-								strcpy(v->name, token);
-								v->numdims = 0;
-								if (token[strlen(token) - 1] == '$')
-								{
-									v->IsStringVar = TRUE;
-									v->StringVar = NULL;
-									v->AddressOfStringVar = &v->StringVar;
-								}
-								else
-								{
-									v->IsStringVar = FALSE;
-									v->DoubleVar = 0.0;
-									v->AddressOfDoubleVar = &v->DoubleVar;
-								}
-							}
-							t->vp = v;
-						}
-//*********************************************************
-					}
-					else if (isdigit(ch) || ch == '.')
-					{
-						t->kind = toknum;
-						n = 0.0;
-						d = 1.0;
-						d1 = 1.0;
-						i--;
-						while (i <= strlen(inbuf) && (isdigit(inbuf[i - 1]) || inbuf[i - 1] == '.' && d1 == 1))
-						{
-							if (inbuf[i - 1] == '.')
-								d1 = 10.0;
-							else
-							{
-								n = n * 10 + inbuf[i - 1] - 48;
-								d *= d1;
-							}
-							i++;
-						}
-						n /= d;
-
-						if (i <= strlen(inbuf) && (inbuf[i - 1] == 'E' || inbuf[i - 1] == 'e'))
-						{
-							i++;
-							d1 = 10.0;
-							if (i <= strlen(inbuf) && (inbuf[i - 1] == '-' || inbuf[i - 1] == '+'))
-
-							{
-								if (inbuf[i - 1] == '-')
-									d1 = 0.1;
-								i++;
-							}
-							j = 0;
-							while (i <= strlen(inbuf) && isdigit(inbuf[i - 1]))
-							{
-								j = j * 10 + inbuf[i - 1] - 48;
-								i++;
-							}
-							for (k = 1; k <= j; k++)
-								n *= d1;
-						}
-						t->num = n;
+						v->IsStringVar = TRUE;
+						v->StringVar = NULL;
+						v->AddressOfStringVar = &v->StringVar;
 					}
 					else
 					{
-						t->kind = tokSyntaxError;
-						t->BadSyntaxChar = ch;
+						v->IsStringVar = FALSE;
+						v->DoubleVar = 0.0;
+						v->AddressOfDoubleVar = &v->DoubleVar;
 					}
-					break;
+				}
+				t->vp = v;
 			}
 		}
+		else if (isdigit(ch) || ch == '.')
+		{
+			// Parse number using optimized function
+			i--;
+			int chars_consumed;
+			t->kind = toknum;
+			t->num = FastParseNumber(inbuf + i, &chars_consumed);
+			i += chars_consumed;
+		}
+		else
+		{
+			t->kind = tokSyntaxError;
+			t->BadSyntaxChar = ch;
+		}
 	}
-	while (i <= strlen(inbuf));
 }
+
+
 
 //*****************************************************************************
 
@@ -634,7 +492,7 @@ void ClearAll(void)	// tied to the new BASIC command:  CLEAR
 
 //*****************************************************************************
 
-void RestoreData()
+void RestoreData(void)
 {
 	dataline = NULL;
 	datatok = NULL;
@@ -644,7 +502,7 @@ void RestoreData()
 
 void ClearLoops(void)
 {
-	looprec *l;
+	looprec* l;
 	while (loopbase != NULL)
 	{
 		l = loopbase->next;
@@ -654,29 +512,29 @@ void ClearLoops(void)
 }
 //*****************************************************************************
 
-void FreeStringArrays(struct varrec *varbase)
+void FreeStringArrays(struct varrec* ThisVarbase)
 {
 	int i, k;
-	if (varbase->numdims > 0)
+	if (ThisVarbase->numdims > 0)
 	{
 		k = 1;
-		for (i = 0; i < varbase->numdims; i++)
+		for (i = 0; i < ThisVarbase->numdims; i++)
 		{
-			k = k * (varbase->dims[i]);
+			k = k * (ThisVarbase->dims[i]);
 		}
 		for (i = 0; i < k; i++)
 		{
-			free(varbase->sarr[i]);
+			free(ThisVarbase->sarr[i]);
 		}
-		free(varbase->sarr);
+		free(ThisVarbase->sarr);
 	}
 }
 
 //*****************************************************************************
 
-void ClearVars()
+void ClearVars(void)
 {
-	varrec *v;
+	varrec* v;
 	v = varbase;
 
 	while (v != NULL)
@@ -708,658 +566,656 @@ void ClearVars()
 
 //*****************************************************************************
 
-char *NumToStr(char *Result, double n)
+char* NumToStr(char* Result, double n)
 {
 	char s[256] = { 0 };
-	register long i;
-
-	s[0] = '\0';
-	if (n != 0 && fabs(n) < 1e-2 || fabs(n) >= 1e12)
+	if (n != 0 && (fabs(n) < 1e-2 || fabs(n) >= 1e12))
 	{
-		sprintf(s, "% .5E", n);
-		i = strlen(s) + 1;
-		s[i - 1] = '\0';
-		return strcpy(Result, s);
+		snprintf(s, sizeof(s), "% .5E", n);
+		strncpy(Result, s, MAXSTRINGVAR - 1);
+		return Result;
 	}
 	else
 	{
-		sprintf(s, "%30.15f", n);
-		i = strlen(s) + 1;
-		do
-		{
-			i--;
-		}
-		while (s[i - 1] == '0');
-		if (s[i - 1] == '.')
-			i--;
-		s[i] = '\0';
-		return strcpy(Result, ltrim(s));
+		snprintf(s, sizeof(s), "%30.15f", n);
+		char* p = s + (int)strlen(s) - 1;
+		while (p > s && *p == '0') *p-- = '\0';
+		if (*p == '.') *p = '\0';
+		strncpy(Result, ltrim(s), MAXSTRINGVAR - 1);
+		return Result;
 	}
 }
 
 //*****************************************************************************
 
-void ListTokens(FILE *f, tokenrec *buf)
+void ListTokens(FILE* f, tokenrec* buf)
 {
 	char Str1[2048] = { 0 };
 
 	switch (buf->kind)
 	{
-		case toknext:
-		case tokloop:
-		case tokwend:
-			BumpDown();
+	case toknext:
+	case tokloop:
+	case tokwend:
+		BumpDown();
 	}
 
-	fprintf(f, Scoot);
+	fprintf(f, "%s", Scoot);
 
 	while (buf != NULL)
 	{
 		switch (buf->kind)
 		{
-			case toklp:
-				putc('(', f);
-				break;
-
-			case tokrp:
-				putc(')', f);
-				break;
-
-			case tokcomma:
-				putc(',', f);
-				break;
-
-			case toksemi:
-				putc(';', f);
-				break;
-
-			case tokvar:
-				fputs(mcase(buf->vp->name), f);	//Use MCASE$ to list our variables
-				break;
-
-			case toknum:
-				color(15, 1);
-				fputs(NumToStr(Str1, buf->num), f);
-				color(14, 1);
-				break;
-
-			case tokstr:
-				fprintf(f, "\"%s\"", buf->sp);
-				break;
-
-			case tokplus:
-				fprintf(f, "+");
-				break;
-
-			case tokminus:
-				fprintf(f, "-");
-				break;
-
-			case toktimes:
-				fprintf(f, "*");
-				break;
-
-			case tokdiv:
-				fprintf(f, "/");
-				break;
-
-			case tokup:
-				fprintf(f, "^");
-				break;
-
-			case tokcolon:
-				fprintf(f, " : ");
-				break;
-
-			case tokeq:
-				fprintf(f, " = ");
-				break;
-
-			case toklt:
-				fprintf(f, " < ");
-				break;
-
-			case tokgt:
-				fprintf(f, " > ");
-				break;
-
-			case tokle:
-				fprintf(f, " <= ");
-				break;
-
-			case tokge:
-				fprintf(f, " >= ");
-				break;
-
-			case tokne:
-				fprintf(f, " <> ");
-				break;
-
-			case tokand:
-				HiLite(f, " AND ");
-				break;
-
-			case tokor:
-				HiLite(f, " OR ");
-				break;
-
-			case tokxor:
-				HiLite(f, " XOR ");
-				break;
-
-			case tokround:
-				HiLite(f, "ROUND");
-				break;
-
-			case tokmod:
-				HiLite(f, " MOD ");
-				break;
-
-			case toknot:
-				HiLite(f, " NOT ");
-				break;
-
-			case toksqr:
-				HiLite(f, "SQR");
-				break;
-
-			case toksqrt:
-				HiLite(f, "SQRT");
-				break;
-
-			case toksin:
-				HiLite(f, "SIN");
-				break;
-
-			case tokcos:
-				HiLite(f, "COS");
-				break;
-
-			case toktan:
-				HiLite(f, "TAN");
-				break;
-
-			case tokatan:
-				HiLite(f, "ATN");
-				break;
-
-			case toklog10:
-				HiLite(f, "LOG10");
-				break;
-
-			case toklog:
-				HiLite(f, "LOG");
-				break;
-
-			case tokexp:
-				HiLite(f, "EXP");
-				break;
-
-			case tokabs:
-				HiLite(f, "ABS");
-				break;
-
-			case toksgn:
-				HiLite(f, "SGN");
-				break;
-
-			case tokint:
-				HiLite(f, "INT");
-				break;
-
-			case tokkeypress:
-				HiLite(f, "KEYPRESS");
-				break;
-
-			case toktimer:
-				HiLite(f, "TIMER");
-				break;
-
-			case tokrnd:
-				HiLite(f, "RND");
-				break;
-
-			case tokstr_:
-				HiLite(f, "STR$");
-				break;
-
-			case tokval:
-				HiLite(f, "VAL");
-				break;
-
-			case tokhex_:
-				HiLite(f, "HEX$");
-				break;
-
-			case toklof:
-				HiLite(f, "LOF");
-				break;
-
-			case toklike:
-				HiLite(f, "LIKE");
-				break;
-
-			case tokverify:
-				HiLite(f, "VERIFY");
-				break;
-
-			case tokexist:
-				HiLite(f, "EXIST");
-				break;
-
-			case toksleep:
-				HiLite(f, "SLEEP");
-				break;
-
-			case toktextmode:
-				HiLite(f, "TEXTMODE ");
-				break;
-
-			case tokrandomize:
-				HiLite(f, "RANDOMIZE ");
-				break;
-
-			case toksetcursor:
-				HiLite(f, "SETCURSOR ");
-				break;
-
-			case tokchr_:
-				HiLite(f, "CHR$");
-				break;
-
-			case toktime_:
-				HiLite(f, "TIME$");
-				break;
-
-			case tokinkey_:
-				HiLite(f, "INKEY$");
-				break;
-
-			case tokdate_:
-				HiLite(f, "DATE$");
-				break;
-
-			case tokcurdir_:
-				HiLite(f, "CURDIR$");
-				break;
-
-			case tokwindir_:
-				HiLite(f, "WINDIR$");
-				break;
-
-			case toksysdir_:
-				HiLite(f, "SYSDIR$");
-				break;
-
-			case toktempdir_:
-				HiLite(f, "TEMPDIR$");
-				break;
-
-			case toktrim_:
-				HiLite(f, "TRIM$");
-				break;
-
-			case tokenviron_:
-				HiLite(f, "ENVIRON$");
-				break;
-
-			case tokltrim_:
-				HiLite(f, "LTRIM$");
-				break;
-
-			case tokrtrim_:
-				HiLite(f, "RTRIM$");
-				break;
-
-			case tokenc_:
-				HiLite(f, "ENCLOSE$");
-				break;
-
-			case tokucase_:
-				HiLite(f, "UCASE$");
-				break;
-
-			case tokfindfirst_:
-				HiLite(f, "FINDFIRST$");
-				break;
-
-			case tokfindnext_:
-				HiLite(f, "FINDNEXT$");
-				break;
-
-			case toklcase_:
-				HiLite(f, "LCASE$");
-				break;
-
-			case tokmcase_:
-				HiLite(f, "MCASE$");
-				break;
-
-			case tokspace_:
-				HiLite(f, "SPACE$");
-				break;
-
-			case tokleft_:
-				HiLite(f, "LEFT$");
-				break;
-
-			case tokright_:
-				HiLite(f, "RIGHT$");
-				break;
-
-			case tokrepeat_:
-				HiLite(f, "REPEAT$");
-				break;
-
-			case tokusing_:
-				HiLite(f, "USING$");
-				break;
-
-			case tokextract_:
-				HiLite(f, "EXTRACT$");
-				break;
-
-			case tokinstr:
-				HiLite(f, "INSTR");
-				break;
-
-			case tokremain_:
-				HiLite(f, "REMAIN$");
-				break;
-
-			case tokretain_:
-				HiLite(f, "RETAIN$");
-				break;
-
-			case tokireplace_:
-				HiLite(f, "IREPLACE$");
-				break;
-
-			case tokinputbox:
-				HiLite(f, "INPUTBOX$");
-				break;
-
-			case tokokcancel:
-				HiLite(f, "OK_CANCEL ");
-				break;
-
-			case tokyncancel:
-				HiLite(f, "YN_CANCEL");
-				break;
-
-			case tokremove_:
-				HiLite(f, "REMOVE$");
-				break;
-
-			case tokasc:
-				HiLite(f, "ASC");
-				break;
-
-			case tokeof:
-				HiLite(f, "EOF");
-				break;
-
-			case tokpi:
-				HiLite(f, "PI");
-				break;
-
-			case tokcrlf_:
-				HiLite(f, "CRLF$");
-				break;
-
-			case toktrue:
-				HiLite(f, "TRUE");
-				break;
-
-			case tokfalse:
-				HiLite(f, "FALSE");
-				break;
-
-			case toklen:
-				HiLite(f, "LEN");
-				break;
-
-			case tokmid_:
-				HiLite(f, "MID$");
-				break;
-
-			case toklet:
-				HiLite(f, "LET ");
-				break;
-
-			case tokprint:
-				HiLite(f, "PRINT ");
-				break;
-
-			case tokfprint:
-				HiLite(f, "FPRINT ");
-				break;
-
-			case tokflineinput:
-				HiLite(f, "LINE ");
-				break;
-
-			case tokget:
-				HiLite(f, "GET ");
-				break;
-
-			case tokput:
-				HiLite(f, "PUT ");
-				break;
-
-			case tokseek:
-				HiLite(f, "SEEK ");
-				break;
-
-			case tokappend:
-				HiLite(f, "APPEND ");
-				break;
-
-			case tokbinary:
-				HiLite(f, "BINARY ");
-				break;
-
-			case tokclose:
-				HiLite(f, "CLOSE ");
-				break;
-
-			case tokrewind:
-				HiLite(f, "REWIND ");
-				break;
-
-			case tokinput:
-				HiLite(f, "INPUT ");
-				break;
-
-			case tokoutput:
-				HiLite(f, "OUTPUT ");
-				break;
-
-			case tokgoto:
-				HiLite(f, " GOTO ");
-				break;
-
-			case tokif:
-				HiLite(f, "IF ");
-				break;
-
-			case tokend:
-				HiLite(f, "END");
-				break;
-
-			case tokstop:
-				HiLite(f, "STOP");
-				break;
-
-			case tokfor:
-				HiLite(f, "FOR ");
-				BumpUp();
-				break;
-
-			case toknext:
-				HiLite(f, "NEXT ");
-				break;
-
-			case tokwhile:
-				HiLite(f, "WHILE ");
-				BumpUp();
-				break;
-
-			case tokwend:
-				HiLite(f, "WEND ");
-				break;
-
-			case tokdo:
-				HiLite(f, "DO ");
-				BumpUp();
-				break;
-
-			case tokloop:
-				HiLite(f, "LOOP ");
-				break;
-
-			case tokuntil:
-				HiLite(f, "UNTIL ");
-				break;
-
-			case tokgosub:
-				HiLite(f, "GOSUB ");
-				break;
-
-			case tokreturn:
-				HiLite(f, "RETURN");
-				break;
-
-			case tokread:
-				HiLite(f, "READ ");
-				break;
-
-			case tokdata:
-				HiLite(f, "DATA ");
-				break;
-
-			case tokrestore:
-				HiLite(f, "RESTORE ");
-				break;
-
-			case tokmsgbox:
-				HiLite(f, "MSGBOX");
-				break;
-
-			case toklocate:
-				HiLite(f, "LOCATE ");
-				break;
-
-			case tokgotoxy:
-				HiLite(f, "GOTOXY ");
-				break;
-
-			case tokcolor:
-				HiLite(f, "COLOR ");
-				break;
-
-			case tokon:
-				HiLite(f, "ON ");
-				break;
-
-			case tokdim:
-				HiLite(f, "DIM ");
-				break;
-
-			case toklist:
-				HiLite(f, "LIST");
-				break;
-
-			case tokrun:
-				HiLite(f, "RUN");
-				break;
-
-			case tokcls:
-				HiLite(f, "CLS");
-				break;
-
-			case tokclear:
-				HiLite(f, "CLEAR");
-				break;
-
-			case tokopen:
-				HiLite(f, "OPEN ");
-				break;
-
-			case tokas:
-				HiLite(f, "AS ");
-				BumpDown();
-				break;
-
-			case toknew:
-				HiLite(f, "NEW");
-				break;
-
-			case tokshell:
-				HiLite(f, "SHELL ");
-				break;
-
-			case tokeval:
-				HiLite(f, "EVAL ");
-				break;
-
-			case tokkill:
-				HiLite(f, "KILL ");
-				break;
-
-			case tokload:
-				HiLite(f, "LOAD ");
-				break;
-
-			case tokmerge:
-				HiLite(f, "MERGE ");
-				break;
-
-			case toksave:
-				HiLite(f, "SAVE ");
-				break;
-
-			case tokdel:
-				HiLite(f, "DEL ");
-				break;
-
-			case tokbye:
-				HiLite(f, "BYE ");
-				break;
-
-			case tokrenum:
-				HiLite(f, "RENUM");
-				break;
-
-			case tokthen:
-				HiLite(f, " THEN ");
-				break;
-
-			case tokelse:
-				HiLite(f, " ELSE ");
-				break;
-
-			case tokto:
-				HiLite(f, " TO ");
-				break;
-
-			case tokstep:
-				HiLite(f, " STEP ");
-				break;
-
-			case tokswap:
-				HiLite(f, "SWAP ");
-				break;
-
-			case tokrem:
-				color(11, 1);
-				fprintf(f, "'%s", buf->sp);	// All REM's become single quotes
-				color(14, 1);
-				break;
-
-			case tokSyntaxError:
-				fprintf(f, ">>> %c <<<", buf->BadSyntaxChar);
-				break;
+		case toklp:
+			putc('(', f);
+			break;
+
+		case tokrp:
+			putc(')', f);
+			break;
+
+		case tokcomma:
+			putc(',', f);
+			break;
+
+		case tokfunction:
+			HiLite(f, "FUNCTION ");
+			break;
+
+
+		case toksemi:
+			putc(';', f);
+			break;
+
+		case tokvar:
+			fputs(mcase(buf->vp->name), f);	//Use MCASE$ to list our variables
+			break;
+
+		case toknum:                        // numbers
+			color(15, BGCOLOR);
+			fputs(NumToStr(Str1, buf->num), f);
+			color(FGCOLOR, BGCOLOR);
+			break;
+
+		case tokstr:                        // strings
+			color(6, BGCOLOR);
+			fprintf(f, "\"%s\"", buf->sp);
+			color(FGCOLOR, BGCOLOR);
+			break;
+
+		case tokplus:
+			fprintf(f, "+");
+			break;
+
+		case tokminus:
+			fprintf(f, "-");
+			break;
+
+		case toktimes:
+			fprintf(f, "*");
+			break;
+
+		case tokdiv:
+			fprintf(f, "/");
+			break;
+
+		case tokup:
+			fprintf(f, "^");
+			break;
+
+		case tokcolon:
+			fprintf(f, " : ");
+			break;
+
+		case tokeq:
+			fprintf(f, " = ");
+			break;
+
+		case toklt:
+			fprintf(f, " < ");
+			break;
+
+		case tokgt:
+			fprintf(f, " > ");
+			break;
+
+		case tokle:
+			fprintf(f, " <= ");
+			break;
+
+		case tokge:
+			fprintf(f, " >= ");
+			break;
+
+		case tokne:
+			fprintf(f, " <> ");
+			break;
+
+		case tokand:
+			HiLite(f, " AND ");
+			break;
+
+		case tokor:
+			HiLite(f, " OR ");
+			break;
+
+		case tokxor:
+			HiLite(f, " XOR ");
+			break;
+
+		case tokround:
+			HiLite(f, "ROUND");
+			break;
+
+		case tokmod:
+			HiLite(f, " MOD ");
+			break;
+
+		case toknot:
+			HiLite(f, " NOT ");
+			break;
+
+		case toksqr:
+			HiLite(f, "SQR");
+			break;
+
+		case toksqrt:
+			HiLite(f, "SQRT");
+			break;
+
+		case toksin:
+			HiLite(f, "SIN");
+			break;
+
+		case tokcos:
+			HiLite(f, "COS");
+			break;
+
+		case toktan:
+			HiLite(f, "TAN");
+			break;
+
+		case tokatan:
+			HiLite(f, "ATN");
+			break;
+
+		case toklog10:
+			HiLite(f, "LOG10");
+			break;
+
+		case toklog:
+			HiLite(f, "LOG");
+			break;
+
+		case tokexp:
+			HiLite(f, "EXP");
+			break;
+
+		case tokabs:
+			HiLite(f, "ABS");
+			break;
+
+		case toksgn:
+			HiLite(f, "SGN");
+			break;
+
+		case tokint:
+			HiLite(f, "INT");
+			break;
+
+		case tokkeypress:
+			HiLite(f, "KEYPRESS");
+			break;
+
+		case toktimer:
+			HiLite(f, "TIMER");
+			break;
+
+		case tokrnd:
+			HiLite(f, "RND");
+			break;
+
+		case tokstr_:
+			HiLite(f, "STR$");
+			break;
+
+		case tokval:
+			HiLite(f, "VAL");
+			break;
+
+		case tokhex_:
+			HiLite(f, "HEX$");
+			break;
+
+		case toklof:
+			HiLite(f, "LOF");
+			break;
+
+		case toklike:
+			HiLite(f, "LIKE");
+			break;
+
+		case tokverify:
+			HiLite(f, "VERIFY");
+			break;
+
+		case tokexist:
+			HiLite(f, "EXIST");
+			break;
+
+		case toksleep:
+			HiLite(f, "SLEEP");
+			break;
+
+		case toktextmode:
+			HiLite(f, "TEXTMODE ");
+			break;
+
+		case tokrandomize:
+			HiLite(f, "RANDOMIZE ");
+			break;
+
+		case toksetcursor:
+			HiLite(f, "SETCURSOR ");
+			break;
+
+		case tokchr_:
+			HiLite(f, "CHR$");
+			break;
+
+		case toktime_:
+			HiLite(f, "TIME$");
+			break;
+
+		case tokinkey_:
+			HiLite(f, "INKEY$");
+			break;
+
+		case tokdate_:
+			HiLite(f, "DATE$");
+			break;
+
+		case tokcurdir_:
+			HiLite(f, "CURDIR$");
+			break;
+
+		case tokwindir_:
+			HiLite(f, "WINDIR$");
+			break;
+
+		case toksysdir_:
+			HiLite(f, "SYSDIR$");
+			break;
+
+		case toktempdir_:
+			HiLite(f, "TEMPDIR$");
+			break;
+
+		case toktrim_:
+			HiLite(f, "TRIM$");
+			break;
+
+		case tokenviron_:
+			HiLite(f, "ENVIRON$");
+			break;
+
+		case tokltrim_:
+			HiLite(f, "LTRIM$");
+			break;
+
+		case tokrtrim_:
+			HiLite(f, "RTRIM$");
+			break;
+
+		case tokenc_:
+			HiLite(f, "ENCLOSE$");
+			break;
+
+		case tokucase_:
+			HiLite(f, "UCASE$");
+			break;
+
+		case tokfindfirst_:
+			HiLite(f, "FINDFIRST$");
+			break;
+
+		case tokfindnext_:
+			HiLite(f, "FINDNEXT$");
+			break;
+
+		case toklcase_:
+			HiLite(f, "LCASE$");
+			break;
+
+		case tokmcase_:
+			HiLite(f, "MCASE$");
+			break;
+
+		case tokspace_:
+			HiLite(f, "SPACE$");
+			break;
+
+		case tokleft_:
+			HiLite(f, "LEFT$");
+			break;
+
+		case tokright_:
+			HiLite(f, "RIGHT$");
+			break;
+
+		case tokrepeat_:
+			HiLite(f, "REPEAT$");
+			break;
+
+		case tokusing_:
+			HiLite(f, "USING$");
+			break;
+
+		case tokextract_:
+			HiLite(f, "EXTRACT$");
+			break;
+
+		case tokinstr:
+			HiLite(f, "INSTR");
+			break;
+
+		case tokremain_:
+			HiLite(f, "REMAIN$");
+			break;
+
+		case tokretain_:
+			HiLite(f, "RETAIN$");
+			break;
+
+		case tokireplace_:
+			HiLite(f, "IREPLACE$");
+			break;
+
+		case tokinputbox:
+			HiLite(f, "INPUTBOX$");
+			break;
+
+		case tokokcancel:
+			HiLite(f, "OK_CANCEL ");
+			break;
+
+		case tokyncancel:
+			HiLite(f, "YN_CANCEL");
+			break;
+
+		case tokremove_:
+			HiLite(f, "REMOVE$");
+			break;
+
+		case tokasc:
+			HiLite(f, "ASC");
+			break;
+
+		case tokeof:
+			HiLite(f, "EOF");
+			break;
+
+		case tokpi:
+			HiLite(f, "PI");
+			break;
+
+		case tokcrlf_:
+			HiLite(f, "CRLF$");
+			break;
+
+		case toktrue:
+			HiLite(f, "TRUE");
+			break;
+
+		case tokfalse:
+			HiLite(f, "FALSE");
+			break;
+
+		case toklen:
+			HiLite(f, "LEN");
+			break;
+
+		case tokmid_:
+			HiLite(f, "MID$");
+			break;
+
+		case toklet:
+			HiLite(f, "LET ");
+			break;
+
+		case tokprint:
+			HiLite(f, "PRINT ");
+			break;
+
+		case tokfprint:
+			HiLite(f, "FPRINT ");
+			break;
+
+		case tokflineinput:
+			HiLite(f, "LINE ");
+			break;
+
+		case tokget:
+			HiLite(f, "GET ");
+			break;
+
+		case tokput:
+			HiLite(f, "PUT ");
+			break;
+
+		case tokseek:
+			HiLite(f, "SEEK ");
+			break;
+
+		case tokappend:
+			HiLite(f, "APPEND ");
+			break;
+
+		case tokbinary:
+			HiLite(f, "BINARY ");
+			break;
+
+		case tokclose:
+			HiLite(f, "CLOSE ");
+			break;
+
+		case tokrewind:
+			HiLite(f, "REWIND ");
+			break;
+
+		case tokinput:
+			HiLite(f, "INPUT ");
+			break;
+
+		case tokoutput:
+			HiLite(f, "OUTPUT ");
+			break;
+
+		case tokgoto:
+			HiLite(f, " GOTO ");
+			break;
+
+		case tokif:
+			HiLite(f, "IF ");
+			break;
+
+		case tokend:
+			HiLite(f, "END");
+			break;
+
+		case tokstop:
+			HiLite(f, "STOP");
+			break;
+
+		case tokfor:
+			HiLite(f, "FOR ");
+			BumpUp();
+			break;
+
+		case toknext:
+			HiLite(f, "NEXT ");
+			break;
+
+		case tokwhile:
+			HiLite(f, "WHILE ");
+			BumpUp();
+			break;
+
+		case tokwend:
+			HiLite(f, "WEND ");
+			break;
+
+		case tokdo:
+			HiLite(f, "DO ");
+			BumpUp();
+			break;
+
+		case tokloop:
+			HiLite(f, "LOOP ");
+			break;
+
+		case tokuntil:
+			HiLite(f, "UNTIL ");
+			break;
+
+		case tokgosub:
+			HiLite(f, "GOSUB ");
+			break;
+
+		case tokreturn:
+			HiLite(f, "RETURN");
+			break;
+
+		case tokread:
+			HiLite(f, "READ ");
+			break;
+
+		case tokdata:
+			HiLite(f, "DATA ");
+			break;
+
+		case tokrestore:
+			HiLite(f, "RESTORE ");
+			break;
+
+		case tokmsgbox:
+			HiLite(f, "MSGBOX");
+			break;
+
+		case toklocate:
+			HiLite(f, "LOCATE ");
+			break;
+
+		case tokgotoxy:
+			HiLite(f, "GOTOXY ");
+			break;
+
+		case tokcolor:
+			HiLite(f, "COLOR ");
+			break;
+
+		case tokon:
+			HiLite(f, "ON ");
+			break;
+
+		case tokdim:
+			HiLite(f, "DIM ");
+			break;
+
+		case toklist:
+			HiLite(f, "LIST");
+			break;
+
+		case tokrun:
+			HiLite(f, "RUN");
+			break;
+
+		case tokcls:
+			HiLite(f, "CLS");
+			break;
+
+		case tokclear:
+			HiLite(f, "CLEAR");
+			break;
+
+		case tokopen:
+			HiLite(f, "OPEN ");
+			break;
+
+		case tokas:
+			HiLite(f, "AS ");
+			BumpDown();
+			break;
+
+		case toknew:
+			HiLite(f, "NEW");
+			break;
+
+		case tokshell:
+			HiLite(f, "SHELL ");
+			break;
+
+		case tokeval:
+			HiLite(f, "EVAL ");
+			break;
+
+		case tokkill:
+			HiLite(f, "KILL ");
+			break;
+
+		case tokload:
+			HiLite(f, "LOAD ");
+			break;
+
+		case tokmerge:
+			HiLite(f, "MERGE ");
+			break;
+
+		case toksave:
+			HiLite(f, "SAVE ");
+			break;
+
+		case tokdel:
+			HiLite(f, "DEL ");
+			break;
+
+		case tokbye:
+			HiLite(f, "BYE ");
+			break;
+
+		case tokrenum:
+			HiLite(f, "RENUM");
+			break;
+
+		case tokthen:
+			HiLite(f, " THEN ");
+			break;
+
+		case tokelse:
+			HiLite(f, " ELSE ");
+			break;
+
+		case tokto:
+			HiLite(f, " TO ");
+			break;
+
+		case tokstep:
+			HiLite(f, " STEP ");
+			break;
+
+		case tokswap:
+			HiLite(f, "SWAP ");
+			break;
+
+		case tokrem:
+			color(8, BGCOLOR);
+			fprintf(f, " ' %s", buf->sp);	// All REM's become single quotes
+			color(FGCOLOR, BGCOLOR);
+			break;
+
+		case tokSyntaxError:
+			fprintf(f, ">>> %c <<<", buf->BadSyntaxChar);
+			break;
 		}
 		buf = buf->next;
 	}
@@ -1367,18 +1223,18 @@ void ListTokens(FILE *f, tokenrec *buf)
 
 //*****************************************************************************
 
-void HiLite(FILE *f, char *KW)
+void HiLite(FILE* f, char* KW)
 {
-	color(10, 1);
-	fprintf(f, KW);
-	color(14, 1);
+	color(KWCOLOR, BGCOLOR);
+	fprintf(f, "%s", KW);
+	color(FGCOLOR, BGCOLOR);
 }
 
 //*****************************************************************************
 
-void DisposeTokens(tokenrec **tok1)
+void DisposeTokens(tokenrec** tok1)
 {
-	tokenrec *tok2;
+	tokenrec* tok2;
 	while (*tok1 != NULL)
 	{
 		tok2 = (*tok1)->next;
@@ -1389,38 +1245,31 @@ void DisposeTokens(tokenrec **tok1)
 	}
 }
 
-//*****************************************************************************
-
-void Abort(char *s)
-{
-	printf("(%s)", s);
-	Critical_Escape(42);
-}
 
 //*****************************************************************************
 
-void SyntaxError()
+void SyntaxError(void)
 {
 	Abort("Syntax error!");
 }
 
 //*****************************************************************************
 
-void MismatchError()
+void MismatchError(void)
 {
 	Abort("Mismatch error!");
 }
 
 //*****************************************************************************
 
-void BadSubScript()
+void BadSubScript(void)
 {
 	Abort("Subscript error!");
 }
 
 //*****************************************************************************
 
-double Doublefactor(struct LOC_exec *LINK)
+double Doublefactor(struct LOC_exec* LINK)
 {
 	valrec n;
 	n = factor(LINK);
@@ -1431,7 +1280,7 @@ double Doublefactor(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-char *strfactor(struct LOC_exec *LINK)
+char* strfactor(struct LOC_exec* LINK)
 {
 	valrec n;
 	n = factor(LINK);
@@ -1442,14 +1291,14 @@ char *strfactor(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-long intfactor(struct LOC_exec *LINK)
+long intfactor(struct LOC_exec* LINK)
 {
 	return ((long)floor(Doublefactor(LINK) + 0.5));
 }
 
 //*****************************************************************************
 
-double DoubleExpression(struct LOC_exec *LINK)
+double DoubleExpression(struct LOC_exec* LINK)
 {
 	valrec n;
 	n = Expression(LINK);
@@ -1462,7 +1311,7 @@ double DoubleExpression(struct LOC_exec *LINK)
 //                    grabs the next valid string expression
 //*****************************************************************************
 
-char *StringExpression(struct LOC_exec *LINK)
+char* StringExpression(struct LOC_exec* LINK)
 {
 	valrec n;
 	n = Expression(LINK);
@@ -1475,7 +1324,7 @@ char *StringExpression(struct LOC_exec *LINK)
 //             Store the next valid string expression into Result
 //*****************************************************************************
 
-char *StringExpressionEx(char *Result, struct LOC_exec *LINK)
+char* StringExpressionEx(char* Result, struct LOC_exec* LINK)
 {
 	valrec n;
 	n = Expression(LINK);
@@ -1488,14 +1337,14 @@ char *StringExpressionEx(char *Result, struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-long IntegerExpression(struct LOC_exec *LINK)
+long IntegerExpression(struct LOC_exec* LINK)
 {
 	return ((long)floor(DoubleExpression(LINK) + 0.5));
 }
 
 //*****************************************************************************
 
-void RequireToken(long k, struct LOC_exec *LINK)
+void RequireToken(long k, struct LOC_exec* LINK)
 {
 	if (LINK->Token == NULL || LINK->Token->kind != k)
 		SyntaxError();
@@ -1504,7 +1353,7 @@ void RequireToken(long k, struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-void skipparen(struct LOC_exec *LINK)
+void skipparen(struct LOC_exec* LINK)
 {
 	do
 	{
@@ -1519,22 +1368,36 @@ void skipparen(struct LOC_exec *LINK)
 		}
 		LINK->Token = LINK->Token->next;
 	} while (TRUE);
-  _L1:;
+_L1:
+	;
 }
 
 //*****************************************************************************
 
-varrec *findvar(struct LOC_exec *LINK)
+varrec* findvar(struct LOC_exec* LINK)
 {
-	register long i, j, k, FORLIM;
-	varrec *v;
-	tokenrec *tok;
+	long i, j, k, FORLIM;
+	varrec* v;
+	tokenrec* tok;
 
 	if (LINK->Token->kind == tokrem)
 		return 0;	// allow apostrophe after NEXT
 
 	if (LINK->Token == NULL || LINK->Token->kind != tokvar)
 		SyntaxError();
+
+	// Check if this is a function call
+	if (LINK->Token->next != NULL && LINK->Token->next->kind == toklp)
+	{
+		funcrec* f = FindFunction(LINK->Token->vp->name);
+
+		if (f != NULL)
+		{
+			// This is a function call, not a variable - this shouldn't happen in findvar
+			// but we need to handle it gracefully
+			SyntaxError();
+		}
+	}
 
 	v = LINK->Token->vp;
 
@@ -1569,13 +1432,13 @@ varrec *findvar(struct LOC_exec *LINK)
 
 		if (v->IsStringVar)
 		{
-			v->sarr = (char **)calloc(j * 4, 1);
+			v->sarr = (char**)safe_calloc(j, sizeof(char*));
 			for (k = 0; k < j; k++)
 				v->sarr[k] = NULL;
 		}
 		else
 		{
-			v->arr = (double *)calloc(j * 8, 1);
+			v->arr = (double*)safe_calloc(j, sizeof(double));
 			for (k = 0; k < j; k++)
 				v->arr[k] = 0.0;
 		}
@@ -1591,7 +1454,7 @@ varrec *findvar(struct LOC_exec *LINK)
 	for (i = 1; i <= FORLIM; i++)
 	{
 		j = IntegerExpression(LINK);
-		if ((unsigned long)j >= v->dims[i - 1])
+		if ((unsigned long)j >= (unsigned long)v->dims[i - 1])
 			BadSubScript();
 		k = k * v->dims[i - 1] + j;
 		if (i < v->numdims)
@@ -1603,9 +1466,10 @@ varrec *findvar(struct LOC_exec *LINK)
 	if (v->IsStringVar)
 		v->AddressOfStringVar = &v->sarr[k];	// everytime a scalar variable is found ANYWHERE
 	else
-		v->AddressOfDoubleVar = &v->arr[k];	// everytime an array variable is found ANYWHERE
+		v->AddressOfDoubleVar = &v->arr[k];	    // everytime an array variable is found ANYWHERE
 	return v;
 }
+
 
 //*****************************************************************************
 
@@ -1616,15 +1480,14 @@ long inot(long i)
 
 //*****************************************************************************
 
-valrec factor(struct LOC_exec *LINK)
+valrec factor(struct LOC_exec* LINK)
 {
-	register long i, j;
+	long i, j;
 	double TmpDouble;
-	FILE *FileNumber;
-	varrec *v;
-	tokenrec *facttok;
+	FILE* FileNumber;
+	varrec* v;
+	tokenrec* facttok;
 	valrec n;
-	tokenrec *tok, *tok1;
 	char Str1[2048] = { 0 };
 	char Tmp1[2048] = { 0 };
 	char Tmp2[2048] = { 0 };
@@ -1640,563 +1503,664 @@ valrec factor(struct LOC_exec *LINK)
 	switch (facttok->kind)
 	{
 
-		case toknum:
-			n.val = facttok->num;
-			break;
+	case toknum:
+		n.val = facttok->num;
+		break;
 
-		case tokstr:
-			n.IsStringVal = TRUE;
-			n.sval = (char *)calloc(MAXSTRINGVAR, 1);	// changed from calloc(255,1) by Kevin Diggins
-			strcpy(n.sval, facttok->sp);
-			break;
+	case tokstr:
+		n.IsStringVal = TRUE;
+		n.sval = (char*)safe_calloc(MAXSTRINGVAR, 1);	// changed from calloc(255,1) by Kevin Diggins
+		strcpy(n.sval, facttok->sp);
+		break;
 
-		case tokvar:
-			LINK->Token = facttok;
-			v = findvar(LINK);
-			n.IsStringVal = v->IsStringVar;
-			if (n.IsStringVal)
+
+
+	case tokvar:
+		LINK->Token = facttok;
+
+		// Check if this is a function call
+		if (LINK->Token->next != NULL && LINK->Token->next->kind == toklp)
+		{
+			funcrec* f = FindFunction(LINK->Token->vp->name);
+
+			if (f != NULL)
 			{
-				n.sval = (char *)calloc(MAXSTRINGVAR, 1);	// string vars increased to 2k
+				// This IS a function call
+				varrec* saved_vars[MAXDIMS];
+				double saved_vals[MAXDIMS];
+				char* saved_strs[MAXDIMS];
+				tokenrec* saved_tok;
+				valrec result;
+				int k;
 
-				//***************************************************************
-				//  Null Ptr test added by Kevin Diggins to prevent a$ = a$ + "a"
-				//  crashes when a$ had not been used earlier in a program
-				//***************************************************************
+				LINK->Token = LINK->Token->next;  // Skip function name
+				RequireToken(toklp, LINK);  // Require opening parenthesis
 
-				if (*v->AddressOfStringVar != NULL)	// Null Ptr Test
-				{
-					strcpy(n.sval, *v->AddressOfStringVar);	// Not a Null Ptr
+				// Check for immediate closing parenthesis (no arguments)
+				if (LINK->Token != NULL && LINK->Token->kind == tokrp) {
+					LINK->Token = LINK->Token->next;  // Skip closing parenthesis
+					// No parameters to process
 				}
-				else
-				{
-					strcpy(n.sval, "");	// Prevent a Null Ptr Crash!
+				else {
+					// Parse and evaluate arguments
+					for (k = 0; k < f->numparams; k++) {
+						varrec* v1 = varbase;
+
+						// Find or create parameter variable
+						while (v1 != NULL && _stricmp(v1->name, f->paramnames[k]))
+							v1 = v1->next;
+
+						if (v1 == NULL) {
+							v1 = (varrec*)safe_calloc(1, sizeof(varrec));
+							v1->next = varbase;
+							varbase = v1;
+							strcpy(v1->name, f->paramnames[k]);
+							v1->numdims = 0;
+							v1->IsStringVar = (f->paramnames[k][strlen(f->paramnames[k]) - 1] == '$');
+							if (v1->IsStringVar) {
+								v1->StringVar = NULL;
+								v1->AddressOfStringVar = &v1->StringVar;
+							}
+							else {
+								v1->DoubleVar = 0.0;
+								v1->AddressOfDoubleVar = &v1->DoubleVar;
+							}
+						}
+
+						saved_vars[k] = v1;
+
+						// Save old value
+						if (v1->IsStringVar) {
+							saved_strs[k] = v1->StringVar;
+							v1->StringVar = NULL;
+						}
+						else {
+							saved_vals[k] = v1->DoubleVar;
+						}
+
+						// Evaluate argument
+						if (v1->IsStringVar) {
+							v1->StringVar = StringExpression(LINK);
+						}
+						else {
+							v1->DoubleVar = DoubleExpression(LINK);
+						}
+
+						if (k < f->numparams - 1)
+							RequireToken(tokcomma, LINK);
+					}
+					RequireToken(tokrp, LINK);
 				}
+
+				// Execute function body
+				saved_tok = LINK->Token;
+				LINK->Token = f->body;
+
+				result = Expression(LINK);
+
+				LINK->Token = saved_tok;
+
+				// Restore parameter variables
+				for (k = 0; k < f->numparams; k++) {
+					if (saved_vars[k]->IsStringVar) {
+						if (saved_vars[k]->StringVar != NULL)
+							free(saved_vars[k]->StringVar);
+						saved_vars[k]->StringVar = saved_strs[k];
+					}
+					else {
+						saved_vars[k]->DoubleVar = saved_vals[k];
+					}
+				}
+
+				n = result;
+				break;
+			}
+		}
+
+		// Not a function, treat as variable
+		v = findvar(LINK);
+		n.IsStringVal = v->IsStringVar;
+		if (n.IsStringVal)
+		{
+			n.sval = (char*)safe_calloc(MAXSTRINGVAR, 1);
+
+			if (*v->AddressOfStringVar != NULL)
+			{
+				strcpy(n.sval, *v->AddressOfStringVar);
 			}
 			else
-				n.val = *v->AddressOfDoubleVar;
-			break;
+			{
+				strcpy(n.sval, "");
+			}
+		}
+		else
+			n.val = *v->AddressOfDoubleVar;
+		break;
 
-		case toklp:
-			n = Expression(LINK);
-			RequireToken(tokrp, LINK);
-			break;
 
-		case tokminus:
-			n.val = -Doublefactor(LINK);
-			break;
 
-		case tokplus:
-			n.val = Doublefactor(LINK);
-			break;
 
-//*****************************************************************************
-//      DO NOT REQUIRE () on non-string functions - leave it to the user
-//*****************************************************************************
+	case toklp:
+		n = Expression(LINK);
+		RequireToken(tokrp, LINK);
+		break;
 
-		case tokkeypress:
-			n.val = keypress();
-			break;
+	case tokminus:
+		n.val = -Doublefactor(LINK);
+		break;
 
-		case toktimer:
-			n.val = (float)GetTickCount() * 0.001;
-			break;
+	case tokplus:
+		n.val = Doublefactor(LINK);
+		break;
 
-		case tokrnd:
-			n.val = (float)rand() / RAND_MAX;
-			break;
+		//*****************************************************************************
+		//      DO NOT REQUIRE () on non-string functions - leave it to the user
+		//*****************************************************************************
 
-		case toknot:
-			n.val = inot(intfactor(LINK));
-			break;
+	case tokkeypress:
+		n.val = keypress();
+		break;
 
-		case toksqr:
-			TmpDouble = Doublefactor(LINK);
-			n.val = TmpDouble * TmpDouble;
-			break;
+	case toktimer:
+		n.val = (float)GetTickCount() * 0.001;
+		break;
 
-		case toksqrt:
-			n.val = sqrt(Doublefactor(LINK));
-			break;
+	case tokrnd:
+		n.val = (float)rand() / RAND_MAX;
+		break;
 
-		case tokround:
-			RequireToken(toklp, LINK);
-			n.val = DoubleExpression(LINK);
-			RequireToken(tokcomma, LINK);
-			i = IntegerExpression(LINK);
-			n.val = Round(n.val, i);
-			RequireToken(tokrp, LINK);
-			break;
+	case toknot:
+		n.val = inot(intfactor(LINK));
+		break;
 
-		case toksin:
-			n.val = sin(Doublefactor(LINK));
-			break;
+	case toksqr:
+		TmpDouble = Doublefactor(LINK);
+		n.val = TmpDouble * TmpDouble;
+		break;
 
-		case tokcos:
-			n.val = cos(Doublefactor(LINK));
-			break;
+	case toksqrt:
+		n.val = sqrt(Doublefactor(LINK));
+		break;
 
-		case toktan:
-			n.val = Doublefactor(LINK);
-			n.val = sin(n.val) / cos(n.val);
-			break;
+	case tokround:
+		RequireToken(toklp, LINK);
+		n.val = DoubleExpression(LINK);
+		RequireToken(tokcomma, LINK);
+		i = IntegerExpression(LINK);
+		n.val = Round(n.val, i);
+		RequireToken(tokrp, LINK);
+		break;
 
-		case tokatan:
-			n.val = atan(Doublefactor(LINK));
-			break;
+	case toksin:
+		n.val = sin(Doublefactor(LINK));
+		break;
 
-		case toklog10:
-			n.val = log10(Doublefactor(LINK));
-			break;
+	case tokcos:
+		n.val = cos(Doublefactor(LINK));
+		break;
 
-		case toklog:
-			n.val = log(Doublefactor(LINK));
-			break;
+	case toktan:
+		n.val = Doublefactor(LINK);
+		n.val = sin(n.val) / cos(n.val);
+		break;
 
-		case tokexp:
-			n.val = exp(Doublefactor(LINK));
-			break;
+	case tokatan:
+		n.val = atan(Doublefactor(LINK));
+		break;
 
-		case tokabs:
-			n.val = fabs(Doublefactor(LINK));
-			break;
+	case toklog10:
+		n.val = log10(Doublefactor(LINK));
+		break;
 
-		case toksgn:
-			n.val = Doublefactor(LINK);
-			n.val = (n.val > 0) - (n.val < 0);
-			break;
+	case toklog:
+		n.val = log(Doublefactor(LINK));
+		break;
 
-		case tokint:
-			n.val = Doublefactor(LINK);
-			n.val = floor(n.val);
-			break;
+	case tokexp:
+		n.val = exp(Doublefactor(LINK));
+		break;
 
-		case toklike:
-			RequireToken(toklp, LINK);
-			n.sval = StringExpression(LINK);
-			strcpy(Tmp1, n.sval);
-			RequireToken(tokcomma, LINK);
-			n.sval = StringExpression(LINK);
-			n.val = like(Tmp1, n.sval);
-			RequireToken(tokrp, LINK);
-			break;
+	case tokabs:
+		n.val = fabs(Doublefactor(LINK));
+		break;
 
-		case tokverify:
-			RequireToken(toklp, LINK);
-			n.sval = StringExpression(LINK);
-			strcpy(Tmp1, n.sval);
-			RequireToken(tokcomma, LINK);
-			n.sval = StringExpression(LINK);
-			n.val = Verify(Tmp1, n.sval);
-			RequireToken(tokrp, LINK);
-			break;
+	case toksgn:
+		n.val = Doublefactor(LINK);
+		n.val = (n.val > 0) - (n.val < 0);
+		break;
 
-		case tokexist:
-			RequireToken(toklp, LINK);
-			n.sval = StringExpression(LINK);
-			n.val = Exist(n.sval);
-			RequireToken(tokrp, LINK);
-			break;
+	case tokint:
+		n.val = Doublefactor(LINK);
+		n.val = floor(n.val);
+		break;
 
-		case tokstr_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = (char *)calloc(MAXSTRINGVAR, 1);
-			NumToStr(n.sval, Doublefactor(LINK));
-			RequireToken(tokrp, LINK);
-			break;
+	case toklike:
+		RequireToken(toklp, LINK);
+		n.sval = StringExpression(LINK);
+		strcpy(Tmp1, n.sval);
+		RequireToken(tokcomma, LINK);
+		n.sval = StringExpression(LINK);
+		n.val = like(Tmp1, n.sval);
+		RequireToken(tokrp, LINK);
+		break;
 
-		case tokhex_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = (char *)calloc(MAXSTRINGVAR, 1);
-			sprintf(n.sval, "%lX", intfactor(LINK));
-			RequireToken(tokrp, LINK);
-			break;
+	case tokverify:
+		RequireToken(toklp, LINK);
+		n.sval = StringExpression(LINK);
+		strcpy(Tmp1, n.sval);
+		RequireToken(tokcomma, LINK);
+		n.sval = StringExpression(LINK);
+		n.val = Verify(Tmp1, n.sval);
+		RequireToken(tokrp, LINK);
+		break;
 
-		case tokval:
-			RequireToken(toklp, LINK);
-			n.sval = StringExpression(LINK);
-			n.val = (double)atof(n.sval);
-			RequireToken(tokrp, LINK);
-			break;
+	case tokexist:
+		RequireToken(toklp, LINK);
+		n.sval = StringExpression(LINK);
+		n.val = Exist(n.sval);
+		RequireToken(tokrp, LINK);
+		break;
 
-		case toklof:
-			RequireToken(toklp, LINK);
-			n.sval = StringExpression(LINK);
-			n.val = lof(n.sval);
-			RequireToken(tokrp, LINK);
-			break;
+	case tokstr_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = (char*)safe_calloc(MAXSTRINGVAR, 1);
+		NumToStr(n.sval, Doublefactor(LINK));
+		RequireToken(tokrp, LINK);
+		break;
 
-		case tokenviron_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			GetEnvironmentVariable(n.sval, Str1, MAXSTRINGVAR);
+	case tokhex_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = (char*)safe_calloc(MAXSTRINGVAR, 1);
+		sprintf(n.sval, "%lX", intfactor(LINK));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokval:
+		RequireToken(toklp, LINK);
+		n.sval = StringExpression(LINK);
+		n.val = (double)atof(n.sval);
+		RequireToken(tokrp, LINK);
+		break;
+
+	case toklof:
+		RequireToken(toklp, LINK);
+		n.sval = StringExpression(LINK);
+		n.val = lof(n.sval);
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokenviron_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		GetEnvironmentVariable(n.sval, Str1, MAXSTRINGVAR);
+		strcpy(n.sval, Str1);
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokchr_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = (char*)safe_calloc(MAXSTRINGVAR, 1);
+		strcpy(n.sval, " ");
+		n.sval[0] = (char)intfactor(LINK);
+		RequireToken(tokrp, LINK);
+		break;
+
+	case toktime_:
+		n.IsStringVal = TRUE;
+		n.sval = (char*)safe_calloc(MAXSTRINGVAR, 1);
+		strcpy(n.sval, timef());
+		break;
+
+	case tokinkey_:
+		n.IsStringVal = TRUE;
+		n.sval = (char*)safe_calloc(MAXSTRINGVAR, 1);
+		strcpy(n.sval, inkey());
+		break;
+
+	case tokcrlf_:
+		n.IsStringVal = TRUE;
+		n.sval = (char*)safe_calloc(5, 1);
+		strcpy(n.sval, crlf());
+		break;
+
+	case tokdate_:
+		n.IsStringVal = TRUE;
+		n.sval = (char*)safe_calloc(MAXSTRINGVAR, 1);
+		strcpy(n.sval, mystrDate(DateStr));
+		break;
+
+	case tokwindir_:
+		n.IsStringVal = TRUE;
+		n.sval = (char*)safe_calloc(MAXSTRINGVAR, 1);
+		strcpy(n.sval, windir());
+		break;
+
+	case tokcurdir_:
+		n.IsStringVal = TRUE;
+		n.sval = (char*)safe_calloc(MAXSTRINGVAR, 1);
+		strcpy(n.sval, curdir());
+		break;
+
+	case toksysdir_:
+		n.IsStringVal = TRUE;
+		n.sval = (char*)safe_calloc(MAXSTRINGVAR, 1);
+		strcpy(n.sval, sysdir());
+		break;
+
+	case toktempdir_:
+		n.IsStringVal = TRUE;
+		n.sval = (char*)safe_calloc(MAXSTRINGVAR, 1);
+		strcpy(n.sval, tempdir());
+		break;
+
+	case toktrim_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(n.sval, trim(n.sval));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokltrim_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(n.sval, ltrim(n.sval));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokrtrim_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(n.sval, rtrim(n.sval));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokucase_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(n.sval, ucase(n.sval));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokfindfirst_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(n.sval, findfirst(n.sval));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokfindnext_:
+		n.IsStringVal = TRUE;
+		n.sval = (char*)safe_calloc(MAXSTRINGVAR, 1);
+		strcpy(n.sval, findnext());
+		break;
+
+	case toklcase_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(n.sval, lcase(n.sval));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokmcase_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(n.sval, mcase(n.sval));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokspace_:
+		n.IsStringVal = TRUE;
+		n.sval = (char*)safe_calloc(MAXSTRINGVAR, 1);
+		RequireToken(toklp, LINK);
+		i = IntegerExpression(LINK);
+		if (i < 1)
+			i = 1;
+		strcpy(n.sval, space(i));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokleft_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		RequireToken(tokcomma, LINK);
+		i = IntegerExpression(LINK);
+		if (i < 1)
+			i = 1;
+		strcpy(n.sval, left(n.sval, i));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokusing_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		RequireToken(tokcomma, LINK);
+		TmpDouble = DoubleExpression(LINK);
+		RequireToken(tokrp, LINK);
+		strcpy(n.sval, Using(n.sval, TmpDouble));
+		break;
+
+	case tokright_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		RequireToken(tokcomma, LINK);
+		i = IntegerExpression(LINK);
+		if (i < 1)
+			i = 1;
+		strcpy(n.sval, right(n.sval, i));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokrepeat_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		RequireToken(tokcomma, LINK);
+		i = IntegerExpression(LINK);
+		if (i < 1)
+			i = 1;
+		strcpy(n.sval, repeat(n.sval, i));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokextract_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(Tmp1, n.sval);
+		RequireToken(tokcomma, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(n.sval, extract(Tmp1, n.sval));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokinstr:
+		RequireToken(toklp, LINK);
+		n.sval = StringExpression(LINK);
+		strcpy(Tmp1, n.sval);
+		RequireToken(tokcomma, LINK);
+		n.sval = StringExpression(LINK);
+		RequireToken(tokrp, LINK);
+		n.val = instr(Tmp1, n.sval);
+		break;
+
+	case tokireplace_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(Tmp1, n.sval);
+		RequireToken(tokcomma, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(Tmp2, n.sval);
+		RequireToken(tokcomma, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(n.sval, iReplace(Tmp1, Tmp2, n.sval));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokinputbox:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(Tmp1, n.sval);
+		RequireToken(tokcomma, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(Tmp2, n.sval);
+		RequireToken(tokcomma, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(n.sval, InputBox(Tmp1, Tmp2, n.sval));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokyncancel:
+		n.IsStringVal = FALSE;
+		RequireToken(toklp, LINK);
+		n.sval = StringExpression(LINK);
+		strcpy(Tmp1, n.sval);
+		RequireToken(tokcomma, LINK);
+		n.sval = StringExpression(LINK);
+		n.val = YN_CANCEL(Tmp1, n.sval);
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokenc_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		RequireToken(tokrp, LINK);
+		strcpy(n.sval, enc(n.sval));
+		break;
+
+	case tokremain_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(Tmp1, n.sval);
+		RequireToken(tokcomma, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(n.sval, remain(Tmp1, n.sval));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokretain_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(Tmp1, n.sval);
+		RequireToken(tokcomma, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(n.sval, retain(Tmp1, n.sval));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokremove_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(Tmp1, n.sval);
+		RequireToken(tokcomma, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		strcpy(n.sval, RemoveStr(Tmp1, n.sval));
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokasc:
+		RequireToken(toklp, LINK);
+		n.sval = strfactor(LINK);
+		if (*n.sval == '\0')
+			n.val = 0.0;
+		else
+			n.val = n.sval[0];
+		RequireToken(tokrp, LINK);
+		break;
+
+	case tokmid_:
+		RequireToken(toklp, LINK);
+		n.IsStringVal = TRUE;
+		n.sval = StringExpression(LINK);
+		RequireToken(tokcomma, LINK);
+
+		i = IntegerExpression(LINK);
+
+		if (i < 1)
+			i = 1;
+
+		j = (int)strlen(n.sval);
+
+		if (LINK->Token != NULL && LINK->Token->kind == tokcomma)
+		{
+			LINK->Token = LINK->Token->next;
+			j = IntegerExpression(LINK);
+		}
+
+		if (j > (int)strlen(n.sval) - i + 1)
+			j = (int)strlen(n.sval) - i + 1;
+
+		if (i > (int)strlen(n.sval))
+			*n.sval = '\0';
+		else
+		{
+			sprintf(Str1, "%.*s", (int)j, n.sval + i - 1);
 			strcpy(n.sval, Str1);
-			RequireToken(tokrp, LINK);
-			break;
+		}
 
-		case tokchr_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = (char *)calloc(MAXSTRINGVAR, 1);
-			strcpy(n.sval, " ");
-			n.sval[0] = (char)intfactor(LINK);
-			RequireToken(tokrp, LINK);
-			break;
+		RequireToken(tokrp, LINK);
+		break;
 
-		case toktime_:
-			n.IsStringVal = TRUE;
-			n.sval = (char *)calloc(MAXSTRINGVAR, 1);
-			strcpy(n.sval, timef());
-			break;
+	case toklen:
+		RequireToken(toklp, LINK);
+		n.sval = strfactor(LINK);
+		n.val = (int)strlen(n.sval);
+		RequireToken(tokrp, LINK);
+		break;
 
-		case tokinkey_:
-			n.IsStringVal = TRUE;
-			n.sval = (char *)calloc(MAXSTRINGVAR, 1);
-			strcpy(n.sval, inkey());
-			break;
+	case tokeof:
+		FileNumber = GetFilePtr(intfactor(LINK));
+		n.val = EoF(FileNumber);
+		break;
 
-		case tokcrlf_:
-			n.IsStringVal = TRUE;
-			n.sval = (char *)calloc(5, 1);
-			strcpy(n.sval, crlf());
-			break;
+	case tokpi:
+		n.val = 3.14159265358979;
+		break;
 
-		case tokdate_:
-			n.IsStringVal = TRUE;
-			n.sval = (char *)calloc(MAXSTRINGVAR, 1);
-			strcpy(n.sval, _strdate(DateStr));
-			break;
+	case toktrue:
+		n.val = TRUE;
+		break;
 
-		case tokwindir_:
-			n.IsStringVal = TRUE;
-			n.sval = (char *)calloc(MAXSTRINGVAR, 1);
-			strcpy(n.sval, windir());
-			break;
+	case tokfalse:
+		n.val = FALSE;
+		break;
 
-		case tokcurdir_:
-			n.IsStringVal = TRUE;
-			n.sval = (char *)calloc(MAXSTRINGVAR, 1);
-			strcpy(n.sval, curdir());
-			break;
-
-		case toksysdir_:
-			n.IsStringVal = TRUE;
-			n.sval = (char *)calloc(MAXSTRINGVAR, 1);
-			strcpy(n.sval, sysdir());
-			break;
-
-		case toktempdir_:
-			n.IsStringVal = TRUE;
-			n.sval = (char *)calloc(MAXSTRINGVAR, 1);
-			strcpy(n.sval, tempdir());
-			break;
-
-		case toktrim_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(n.sval, trim(n.sval));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokltrim_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(n.sval, ltrim(n.sval));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokrtrim_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(n.sval, rtrim(n.sval));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokucase_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(n.sval, ucase(n.sval));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokfindfirst_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(n.sval, findfirst(n.sval));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokfindnext_:
-			n.IsStringVal = TRUE;
-			n.sval = (char *)calloc(MAXSTRINGVAR, 1);
-			strcpy(n.sval, findnext());
-			break;
-
-		case toklcase_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(n.sval, lcase(n.sval));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokmcase_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(n.sval, mcase(n.sval));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokspace_:
-			n.IsStringVal = TRUE;
-			n.sval = (char *)calloc(MAXSTRINGVAR, 1);
-			RequireToken(toklp, LINK);
-			i = IntegerExpression(LINK);
-			if (i < 1)
-				i = 1;
-			strcpy(n.sval, space(i));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokleft_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			RequireToken(tokcomma, LINK);
-			i = IntegerExpression(LINK);
-			if (i < 1)
-				i = 1;
-			strcpy(n.sval, left(n.sval, i));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokusing_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			RequireToken(tokcomma, LINK);
-			TmpDouble = DoubleExpression(LINK);
-			RequireToken(tokrp, LINK);
-			strcpy(n.sval, Using(n.sval, TmpDouble));
-			break;
-
-		case tokright_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			RequireToken(tokcomma, LINK);
-			i = IntegerExpression(LINK);
-			if (i < 1)
-				i = 1;
-			strcpy(n.sval, right(n.sval, i));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokrepeat_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			RequireToken(tokcomma, LINK);
-			i = IntegerExpression(LINK);
-			if (i < 1)
-				i = 1;
-			strcpy(n.sval, repeat(n.sval, i));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokextract_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(Tmp1, n.sval);
-			RequireToken(tokcomma, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(n.sval, extract(Tmp1, n.sval));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokinstr:
-			RequireToken(toklp, LINK);
-			n.sval = StringExpression(LINK);
-			strcpy(Tmp1, n.sval);
-			RequireToken(tokcomma, LINK);
-			n.sval = StringExpression(LINK);
-			RequireToken(tokrp, LINK);
-			n.val = instr(Tmp1, n.sval);
-			break;
-
-		case tokireplace_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(Tmp1, n.sval);
-			RequireToken(tokcomma, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(Tmp2, n.sval);
-			RequireToken(tokcomma, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(n.sval, iReplace(Tmp1, Tmp2, n.sval));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokinputbox:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(Tmp1, n.sval);
-			RequireToken(tokcomma, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(Tmp2, n.sval);
-			RequireToken(tokcomma, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(n.sval, InputBox(Tmp1, Tmp2, n.sval));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokyncancel:
-			n.IsStringVal = FALSE;
-			RequireToken(toklp, LINK);
-			n.sval = StringExpression(LINK);
-			strcpy(Tmp1, n.sval);
-			RequireToken(tokcomma, LINK);
-			n.sval = StringExpression(LINK);
-			n.val = YN_CANCEL(Tmp1, n.sval);
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokenc_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			RequireToken(tokrp, LINK);
-			strcpy(n.sval, enc(n.sval));
-			break;
-
-		case tokremain_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(Tmp1, n.sval);
-			RequireToken(tokcomma, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(n.sval, remain(Tmp1, n.sval));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokretain_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(Tmp1, n.sval);
-			RequireToken(tokcomma, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(n.sval, retain(Tmp1, n.sval));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokremove_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(Tmp1, n.sval);
-			RequireToken(tokcomma, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			strcpy(n.sval, RemoveStr(Tmp1, n.sval));
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokasc:
-			RequireToken(toklp, LINK);
-			n.sval = strfactor(LINK);
-			if (*n.sval == '\0')
-				n.val = 0.0;
-			else
-				n.val = n.sval[0];
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokmid_:
-			RequireToken(toklp, LINK);
-			n.IsStringVal = TRUE;
-			n.sval = StringExpression(LINK);
-			RequireToken(tokcomma, LINK);
-
-			i = IntegerExpression(LINK);
-
-			if (i < 1)
-				i = 1;
-
-			j = strlen(n.sval);
-
-			if (LINK->Token != NULL && LINK->Token->kind == tokcomma)
-			{
-				LINK->Token = LINK->Token->next;
-				j = IntegerExpression(LINK);
-			}
-
-			if (j > strlen(n.sval) - i + 1)
-				j = strlen(n.sval) - i + 1;
-
-			if (i > strlen(n.sval))
-				*n.sval = '\0';
-			else
-			{
-				sprintf(Str1, "%.*s", (int)j, n.sval + i - 1);
-				strcpy(n.sval, Str1);
-			}
-
-			RequireToken(tokrp, LINK);
-			break;
-
-		case toklen:
-			RequireToken(toklp, LINK);
-			n.sval = strfactor(LINK);
-			n.val = strlen(n.sval);
-			RequireToken(tokrp, LINK);
-			break;
-
-		case tokeof:
-			FileNumber = GetFilePtr(intfactor(LINK));
-			n.val = EoF(FileNumber);
-			break;
-
-		case tokpi:
-			n.val = 3.14159265358979;
-			break;
-
-		case toktrue:
-			n.val = TRUE;
-			break;
-
-		case tokfalse:
-			n.val = FALSE;
-			break;
-
-		default:
-			SyntaxError();
-			break;
+	default:
+		SyntaxError();
+		break;
 	}
 	return n;
 }
 //****************************************************************
 
-valrec upexpr(struct LOC_exec *LINK)
+valrec upexpr(struct LOC_exec* LINK)
 {
 	valrec n, n2;
 
@@ -2226,7 +2190,7 @@ valrec upexpr(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-valrec term(struct LOC_exec *LINK)
+valrec term(struct LOC_exec* LINK)
 {
 	valrec n, n2;
 	long k;
@@ -2254,7 +2218,7 @@ valrec term(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-valrec sexpr(struct LOC_exec *LINK)
+valrec sexpr(struct LOC_exec* LINK)
 {
 	valrec n, n2;
 	long k;
@@ -2295,7 +2259,7 @@ valrec sexpr(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-valrec relexpr(struct LOC_exec *LINK)
+valrec relexpr(struct LOC_exec* LINK)
 {
 	valrec n, n2;
 	BOOL f;
@@ -2328,7 +2292,7 @@ valrec relexpr(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-valrec andexpr(struct LOC_exec *LINK)
+valrec andexpr(struct LOC_exec* LINK)
 {
 	valrec n, n2;
 	n = relexpr(LINK);
@@ -2345,7 +2309,7 @@ valrec andexpr(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-valrec Expression(struct LOC_exec *LINK)
+valrec Expression(struct LOC_exec* LINK)
 {
 	valrec n, n2;
 	long k;
@@ -2369,7 +2333,7 @@ valrec Expression(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-void checkextra(struct LOC_exec *LINK)
+void checkextra(struct LOC_exec* LINK)
 {
 	if (LINK->Token != NULL)
 		Abort("Extra information on line");
@@ -2377,14 +2341,14 @@ void checkextra(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-BOOL IsEndOfStatement(struct LOC_exec *LINK)
+BOOL IsEndOfStatement(struct LOC_exec* LINK)
 {
 	return (LINK->Token == NULL || LINK->Token->kind == tokelse || LINK->Token->kind == tokcolon || LINK->Token->kind == tokrem);
 }
 
 //*****************************************************************************
 
-void skiptoeos(struct LOC_exec *LINK)
+void skiptoeos(struct LOC_exec* LINK)
 {
 	while (!IsEndOfStatement(LINK))
 		LINK->Token = LINK->Token->next;
@@ -2392,9 +2356,9 @@ void skiptoeos(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-linerec *FindTargetLineNumber(long n)
+linerec* FindTargetLineNumber(long n)
 {
-	linerec *l;
+	linerec* l;
 
 	l = linebase;
 	while (l != NULL && l->num != n)
@@ -2407,7 +2371,7 @@ linerec *FindTargetLineNumber(long n)
 
 //*****************************************************************************
 
-void cmdend(struct LOC_exec *LINK)
+void cmdend(struct LOC_exec* LINK)
 {
 	stmtline = NULL;
 	LINK->Token = NULL;
@@ -2415,7 +2379,7 @@ void cmdend(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-void cmdnew(struct LOC_exec *LINK)
+void cmdnew(struct LOC_exec* LINK)
 {
 	LPVOID p;
 	cmdend(LINK);
@@ -2429,7 +2393,7 @@ void cmdnew(struct LOC_exec *LINK)
 		p = (LPVOID)linebase->next;
 		DisposeTokens(&linebase->txt);
 		free(linebase);
-		linebase = (linerec *)p;
+		linebase = (linerec*)p;
 	}
 
 	while (varbase != NULL)
@@ -2441,25 +2405,35 @@ void cmdnew(struct LOC_exec *LINK)
 				free(*varbase->AddressOfStringVar);
 		}
 		free(varbase);
-		varbase = (varrec *)p;
+		varbase = (varrec*)p;
 	}
+
+	// Clear user-defined functions
+	while (funcbase != NULL)
+	{
+		p = (LPVOID)funcbase->next;
+		DisposeTokens(&funcbase->body);
+		free(funcbase);
+		funcbase = (funcrec*)p;
+	}
+
 
 	//**************
 	SetConsoleTitle("Gillespie BASIC for Windows by Kevin Diggins");
-	color(14, 1);
+	color(FGCOLOR, BGCOLOR);
 	cls();
 	//**************
 }
 
 //*****************************************************************************
 
-void cmdokcancel(struct LOC_exec *LINK)
+void cmdokcancel(struct LOC_exec* LINK)
 {
-	char *Title;
-	char *Message;
+	char* Title;
+	char* Message;
 
-	Title = (char *)calloc(MAXSTRINGVAR, 1);
-	Message = (char *)calloc(MAXSTRINGVAR, 1);
+	Title = (char*)safe_calloc(MAXSTRINGVAR, 1);
+	Message = (char*)safe_calloc(MAXSTRINGVAR, 1);
 
 	Title = StringExpression(LINK);
 	RequireToken(tokcomma, LINK);
@@ -2473,9 +2447,9 @@ void cmdokcancel(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-void cmdlist(struct LOC_exec *LINK)
+void cmdlist(struct LOC_exec* LINK)
 {
-	linerec *l;
+	linerec* l;
 	long n1, n2;
 	int ii;
 
@@ -2483,10 +2457,10 @@ void cmdlist(struct LOC_exec *LINK)
 	{
 		BumpDown();
 	}
-//**************
-	color(14, 1);
+	//**************
+	color(FGCOLOR, BGCOLOR);
 	cls();
-//**************
+	//**************
 	do
 	{
 		n1 = 0;
@@ -2531,9 +2505,9 @@ void cmdlist(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-void cmdrun(struct LOC_exec *LINK)
+void cmdrun(struct LOC_exec* LINK)
 {
-	linerec *l;
+	linerec* l;
 	long i;
 	char s[2048] = { 0 };
 	l = linebase;
@@ -2567,10 +2541,10 @@ void cmdrun(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-void cmdload(BOOL merging, char *name, struct LOC_exec *LINK)
+void cmdload(BOOL merging, char* name, struct LOC_exec* LINK)
 {
-	FILE *f;
-	tokenrec *buf;
+	FILE* f;
+	tokenrec* buf;
 	char Str1[255] = { 0 };
 	long LineNumber = 0;
 
@@ -2581,7 +2555,7 @@ void cmdload(BOOL merging, char *name, struct LOC_exec *LINK)
 	else
 		sprintf(Str1, "%s", name);
 
-//***********************************************************************************
+	//***********************************************************************************
 	if (Str1[0] == 46)	//LOAD "" produces Str1 = ".bas"   46 = '.'
 	{
 		Str1[0] = 0;
@@ -2589,7 +2563,7 @@ void cmdload(BOOL merging, char *name, struct LOC_exec *LINK)
 		if (Str1[0] == 0)
 			goto bailout;	// cancelled out of GetFileName dlg
 	}
-//***********************************************************************************
+	//***********************************************************************************
 	if (!Exist(Str1))
 	{
 		printf("LOAD error: File not found.\n");
@@ -2609,20 +2583,20 @@ void cmdload(BOOL merging, char *name, struct LOC_exec *LINK)
 		goto bailout2;
 	}
 
-	while (fgets(inbuf, 2047, f) != NULL)
+	while (fgets(G_inbuf, 2047, f) != NULL)
 	{
-		if (inbuf[strlen(inbuf) - 1] == 10)
-			inbuf[strlen(inbuf) - 1] = 0;
-//-------------------------------------------------------
-// we can do some PRE-PROCESSING of inbuf at this stage
-// Let's add line numbers to files without them
-//-------------------------------------------------------
-		if (!IsNumber(left(inbuf, 1)))
+		if (G_inbuf[(int)strlen(G_inbuf) - 1] == 10)
+			G_inbuf[(int)strlen(G_inbuf) - 1] = 0;
+		//-------------------------------------------------------
+		// we can do some PRE-PROCESSING of inbuf at this stage
+		// Let's add line numbers to files without them
+		//-------------------------------------------------------
+		if (!IsNumber(left(G_inbuf, 1)))
 		{
 			LineNumber += 10;
-			strcpy(inbuf, join(3, str(LineNumber), " ", inbuf));
+			strcpy(G_inbuf, join(3, str(LineNumber), " ", G_inbuf));
 		}
-//-------------------------------------------------------
+		//-------------------------------------------------------
 		ParseInput(&buf);
 
 		if (curline == 0)
@@ -2638,22 +2612,24 @@ void cmdload(BOOL merging, char *name, struct LOC_exec *LINK)
 
 	SetConsoleTitle(Str1);
 
-  bailout:;
+bailout:
+	;
 	cmdlist(LINK);
 
-  bailout2:;
+bailout2:
+	;
 }
 
 //*****************************************************************************
 
-void cmdsave(struct LOC_exec *LINK)
+void cmdsave(struct LOC_exec* LINK)
 {
-	FILE *f;
-	linerec *l;
+	FILE* f;
+	linerec* l;
 	char Str1[255] = { 0 };
 	char Str2[255] = { 0 };
 
-	if (strlen(OurLoadedFname) > 0)
+	if ((int)strlen(OurLoadedFname) > 0)
 		strcpy(Str2, OurLoadedFname);
 	else
 		sprintf(Str2, "%s.Bas", StringExpressionEx(Str1, LINK));
@@ -2680,20 +2656,21 @@ void cmdsave(struct LOC_exec *LINK)
 	if (f != NULL)
 		fclose(f);
 	f = NULL;
-//-------------------------------------------------------
-	if (strlen(OurLoadedFname) == 0)
+	//-------------------------------------------------------
+	if ((int)strlen(OurLoadedFname) == 0)
 		sprintf(Str1, "%s%s%s", curdir(), "\\", Str2);
 	else
 		strcpy(Str1, OurLoadedFname);
-//-------------------------------------------------------
+	//-------------------------------------------------------
 	printf("%s%s", "File saved: ", OurLoadedFname);
 	SetConsoleTitle(Str1);
-  bailout:;
+bailout:
+	;
 }
 
 //****************************************************************
 
-void cmdbye()
+void cmdbye(void)
 {
 	color(7, 0);
 	cls();
@@ -2703,9 +2680,9 @@ void cmdbye()
 
 //****************************************************************
 
-void cmddel(struct LOC_exec *LINK)
+void cmddel(struct LOC_exec* LINK)
 {
-	linerec *l, *l0, *l1;
+	linerec* l, * l0, * l1;
 	long n1, n2;
 
 	do
@@ -2763,10 +2740,10 @@ void cmddel(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-void cmdrenum(struct LOC_exec *LINK)
+void cmdrenum(struct LOC_exec* LINK)
 {
-	linerec *l, *l1;
-	tokenrec *tok;
+	linerec* l, * l1;
+	tokenrec* tok;
 	long lnum, step;
 
 	lnum = 10;
@@ -2827,7 +2804,7 @@ void cmdrenum(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-void cmdprint(struct LOC_exec *LINK)
+void cmdprint(struct LOC_exec* LINK)
 {
 	BOOL semiflag;
 	valrec n;
@@ -2850,14 +2827,14 @@ void cmdprint(struct LOC_exec *LINK)
 			free(n.sval);
 		}
 		else
-			printf("%s ", NumToStr(Str1, n.val));
+			printf(" %s ", NumToStr(Str1, n.val));
 	}
 	if (!semiflag)
 		putchar('\n');
 }
 //*****************************************************************************
 
-void cmdsleep(struct LOC_exec *LINK)
+void cmdsleep(struct LOC_exec* LINK)
 {
 	DWORD milliseconds;
 	milliseconds = IntegerExpression(LINK);
@@ -2866,7 +2843,7 @@ void cmdsleep(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-void cmdtextmode(struct LOC_exec *LINK)
+void cmdtextmode(struct LOC_exec* LINK)
 {
 	long textlines;
 	textlines = IntegerExpression(LINK);
@@ -2874,7 +2851,7 @@ void cmdtextmode(struct LOC_exec *LINK)
 }
 //*****************************************************************************
 
-void cmdrandomize(struct LOC_exec *LINK)
+void cmdrandomize(struct LOC_exec* LINK)
 {
 	long seed;
 	seed = IntegerExpression(LINK);
@@ -2882,7 +2859,7 @@ void cmdrandomize(struct LOC_exec *LINK)
 }
 //*****************************************************************************
 
-void cmdsetcursor(struct LOC_exec *LINK)
+void cmdsetcursor(struct LOC_exec* LINK)
 {
 	int showhide;
 	showhide = IntegerExpression(LINK);
@@ -2891,9 +2868,9 @@ void cmdsetcursor(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-void cmdclose(struct LOC_exec *LINK)
+void cmdclose(struct LOC_exec* LINK)
 {
-	FILE *FileNumber;
+	FILE* FileNumber;
 	int ioNumber;
 	ioNumber = IntegerExpression(LINK);
 	FileNumber = GetFilePtr(ioNumber);
@@ -2904,9 +2881,9 @@ void cmdclose(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-void cmdrewind(struct LOC_exec *LINK)
+void cmdrewind(struct LOC_exec* LINK)
 {
-	FILE *FileNumber;
+	FILE* FileNumber;
 	int ioNumber;
 	ioNumber = IntegerExpression(LINK);
 	FileNumber = GetFilePtr(ioNumber);
@@ -2915,9 +2892,9 @@ void cmdrewind(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-void cmdfprint(struct LOC_exec *LINK)
+void cmdfprint(struct LOC_exec* LINK)
 {
-	FILE *Channel;
+	FILE* Channel;
 	BOOL semiflag;
 	valrec n;
 	char Str1[2048] = { 0 };
@@ -2951,13 +2928,13 @@ void cmdfprint(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-void cmdget(struct LOC_exec *LINK)	// GET fp1,A$,numofbytes
+void cmdget(struct LOC_exec* LINK)	// GET fp1,A$,numofbytes
 {
-	FILE *FileNumber;
-	varrec *v;
+	FILE* FileNumber;
+	varrec* v;
 	int numbytes;
 
-	char *s = (char *)calloc(MAXSTRINGVAR, 1);
+	char* s = (char*)safe_calloc(MAXSTRINGVAR, 1);
 
 	FileNumber = GetFilePtr(IntegerExpression(LINK));
 
@@ -2975,21 +2952,20 @@ void cmdget(struct LOC_exec *LINK)	// GET fp1,A$,numofbytes
 
 	if (*v->AddressOfStringVar != NULL)
 		free(*v->AddressOfStringVar);
-	*v->AddressOfStringVar = (char *)calloc(MAXSTRINGVAR, 1);
+	*v->AddressOfStringVar = (char*)safe_calloc(MAXSTRINGVAR, 1);
 	strcpy(*v->AddressOfStringVar, s);
 	free(s);
 }
 
 //*****************************************************************************
 
-void cmdput(struct LOC_exec *LINK)	// PUT fp1,A$,numofbytes
+void cmdput(struct LOC_exec* LINK)	// PUT fp1,A$,numofbytes
 {
-	FILE *FileNumber;
-	varrec *v;
+	FILE* FileNumber;
 	valrec n;
 	int numbytes;
 
-	char *s = (char *)calloc(MAXSTRINGVAR, 1);
+	char* s = (char*)safe_calloc(MAXSTRINGVAR, 1);
 
 	FileNumber = GetFilePtr(IntegerExpression(LINK));
 
@@ -3018,9 +2994,9 @@ void cmdput(struct LOC_exec *LINK)	// PUT fp1,A$,numofbytes
 
 //*****************************************************************************
 
-void cmdseek(struct LOC_exec *LINK)	// PUT fp1,A$,numofbytes
+void cmdseek(struct LOC_exec* LINK)	// PUT fp1,A$,numofbytes
 {
-	FILE *FileNumber;
+	FILE* FileNumber;
 	int numbytes;
 
 	FileNumber = GetFilePtr(IntegerExpression(LINK));
@@ -3037,11 +3013,11 @@ void cmdseek(struct LOC_exec *LINK)	// PUT fp1,A$,numofbytes
 
 //*****************************************************************************
 
-void cmdflineinput(struct LOC_exec *LINK)	//LINE INPUT handler
+void cmdflineinput(struct LOC_exec* LINK)	//LINE INPUT handler
 {
-	FILE *FileNumber;
-	varrec *v;
-	char *s = (char *)calloc(MAXSTRINGVAR, 1);
+	FILE* FileNumber;
+	varrec* v;
+	char* s = (char*)safe_calloc(MAXSTRINGVAR, 1);
 
 	RequireToken(tokinput, LINK);	//swallow the INPUT keyword
 
@@ -3055,23 +3031,23 @@ void cmdflineinput(struct LOC_exec *LINK)	//LINE INPUT handler
 	v = findvar(LINK);
 
 	fgets(s, 2047, FileNumber);
-	s[strlen(s) - 1] = 0;
+	s[(int)strlen(s) - 1] = 0;
 
 	if (*v->AddressOfStringVar != NULL)
 		free(*v->AddressOfStringVar);
-	*v->AddressOfStringVar = (char *)calloc(MAXSTRINGVAR, 1);
+	*v->AddressOfStringVar = (char*)safe_calloc(MAXSTRINGVAR, 1);
 	strcpy(*v->AddressOfStringVar, s);
 	free(s);
 }
 
 //*****************************************************************************
 
-static void cmdopen(struct LOC_exec *LINK)
+static void cmdopen(struct LOC_exec* LINK)
 {
-	char *FileName;
+	char* FileName;
 	int FileNumber = 0;
 	int Mode = 0;
-	FileName = (char *)calloc(MAXSTRINGVAR, 1);
+	FileName = (char*)safe_calloc(MAXSTRINGVAR, 1);
 	FileName = StringExpression(LINK);
 	RequireToken(tokfor, LINK);
 
@@ -3098,71 +3074,71 @@ static void cmdopen(struct LOC_exec *LINK)
 
 //****************************************************************
 
-void cmdswap(struct LOC_exec *LINK)
+void cmdswap(struct LOC_exec* LINK)
 {
 	int BothAreScalar = 0;	// must be 0 or 2 - otherwise an error
 	int BothAreStrings = 0;	// must be 0 or 2 - otherwise an error
-	double *AA = NULL;
-	double *BB = NULL;
-	char *sAA = NULL;
-	char *sBB = NULL;
-	varrec *v;
-//********************************************
+	double* AA = NULL;
+	double* BB = NULL;
+	char* sAA = NULL;
+	char* sBB = NULL;
+	varrec* v;
+	//********************************************
 	v = findvar(LINK);
 	if (v->IsStringVar)
 		BothAreStrings++;
 	if (v->numdims == 0)
 		BothAreScalar++;
-//********************************************
+	//********************************************
 	if (v->IsStringVar && v->numdims == 0)
 		sAA = v->StringVar;	//simple string
 	if (v->IsStringVar && v->numdims > 0)
-		sAA = (char *)v->AddressOfStringVar;	//array string
+		sAA = (char*)v->AddressOfStringVar;	//array string
 	if (!v->IsStringVar && v->numdims == 0)
 		AA = &v->DoubleVar;	//simple number
 	if (!v->IsStringVar && v->numdims > 0)
-		AA = (double *)v->AddressOfDoubleVar;	//array number
-//********************************************
+		AA = (double*)v->AddressOfDoubleVar;	//array number
+	//********************************************
 	RequireToken(tokcomma, LINK);
 	v = findvar(LINK);
 	if (v->IsStringVar)
 		BothAreStrings++;
 	if (v->numdims == 0)
 		BothAreScalar++;
-//********************************************
+	//********************************************
 	if (v->IsStringVar && v->numdims == 0)
 		sBB = v->StringVar;	//simple string
 	if (v->IsStringVar && v->numdims > 0)
-		sBB = (char *)v->AddressOfStringVar;	//array string
+		sBB = (char*)v->AddressOfStringVar;	//array string
 	if (!v->IsStringVar && v->numdims == 0)
 		BB = &v->DoubleVar;	//simple number
 	if (!v->IsStringVar && v->numdims > 0)
-		BB = (double *)v->AddressOfDoubleVar;	//array number
-//********************************************
+		BB = (double*)v->AddressOfDoubleVar;	//array number
+	//********************************************
 	if ((BothAreStrings == 2) && (sAA == NULL || sBB == NULL))
 		Abort("SWAP detected a NULL string");
-//********************************************
+	//********************************************
 	if (BothAreStrings == 1)
 		Abort("SWAP detected mixing variable types");
 	if (BothAreScalar == 1)
 		Abort("SWAP detected mixing array and scalar variables");
 	//********************************************
 	if (!BothAreStrings)
-		swap((char *)AA, (char *)BB, sizeof(double));
+		swap((char*)AA, (char*)BB, sizeof(double));
 	if (BothAreStrings && BothAreScalar)
 		swap(sAA, sBB, MAXSTRINGVAR);
 	if (BothAreStrings && !BothAreScalar)
-		swap(sAA, sBB, 4);
+		swap((char*)sAA, (char*)sBB, sizeof(char*));
 }
 
 //*****************************************************************
 
-void cmdinput(struct LOC_exec *LINK)
+void cmdinput(struct LOC_exec* LINK)
 {
-	varrec *v;
-	char *s = (char *)calloc(MAXSTRINGVAR, 1);
+	varrec* v;
+	char* s = (char*)safe_calloc(MAXSTRINGVAR, 1);
 
-	tokenrec *tok, *tok0, *tok1;
+	tokenrec* tok, * tok0, * tok1;
 	BOOL strflag;
 
 	if (LINK->Token != NULL && LINK->Token->kind == tokstr)
@@ -3188,20 +3164,19 @@ void cmdinput(struct LOC_exec *LINK)
 				SyntaxError();
 		}
 		LINK->Token = LINK->Token->next;
-	}
-	while (!IsEndOfStatement(LINK));
+	} while (!IsEndOfStatement(LINK));
 	LINK->Token = tok;
 	if (strflag)
 	{
 		do
 		{
-			GB_gets(inbuf, MAXSTRINGVAR);
+			GB_gets(G_inbuf, MAXSTRINGVAR);
 
 			v = findvar(LINK);
 			if (*v->AddressOfStringVar != NULL)
 				free(*v->AddressOfStringVar);
 
-			*v->AddressOfStringVar = (char *)calloc(MAXSTRINGVAR, 1);
+			*v->AddressOfStringVar = (char*)safe_calloc(MAXSTRINGVAR, 1);
 			strcpy(*v->AddressOfStringVar, s);
 			if (!IsEndOfStatement(LINK))
 			{
@@ -3212,7 +3187,7 @@ void cmdinput(struct LOC_exec *LINK)
 		free(s);
 		return;
 	}
-	gets(s);
+	GB_gets(s, MAXSTRINGVAR);
 	Parse(s, &tok);
 	tok0 = tok;
 	do
@@ -3221,7 +3196,7 @@ void cmdinput(struct LOC_exec *LINK)
 		while (tok == NULL)
 		{
 			printf("? ");
-			gets(s);
+			GB_gets(s, MAXSTRINGVAR);
 			DisposeTokens(&tok0);
 			Parse(s, &tok);
 			tok0 = tok;
@@ -3243,21 +3218,20 @@ void cmdinput(struct LOC_exec *LINK)
 
 		if (!IsEndOfStatement(LINK))
 			RequireToken(tokcomma, LINK);
-	}
-	while (!IsEndOfStatement(LINK));
+	} while (!IsEndOfStatement(LINK));
 	free(s);
 	DisposeTokens(&tok0);
 }
 
 //*******************************************************************************
 
-void cmdlet(BOOL implied, struct LOC_exec *LINK)
+void cmdlet(BOOL implied, struct LOC_exec* LINK)
 {
-	varrec *v;
-	char *old, *gnew;
+	varrec* v;
+	char* old, * gnew;
 	double d_value;
-	double *target;
-	char **starget;
+	double* target;
+	char** starget;
 	target = NULL;
 	starget = NULL;
 
@@ -3296,7 +3270,7 @@ void cmdlet(BOOL implied, struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-void cmdgoto(struct LOC_exec *LINK)
+void cmdgoto(struct LOC_exec* LINK)
 {
 	stmtline = FindTargetLineNumber(IntegerExpression(LINK));
 	LINK->Token = NULL;
@@ -3305,11 +3279,10 @@ void cmdgoto(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-void cmdif(struct LOC_exec *LINK)
+void cmdif(struct LOC_exec* LINK)
 {
 	double n;
-	register long i;
-	int kind;
+	long i;
 
 	n = DoubleExpression(LINK);
 	RequireToken(tokthen, LINK);
@@ -3338,18 +3311,18 @@ void cmdif(struct LOC_exec *LINK)
 
 //*****************************************************************************
 
-void cmdelse(struct LOC_exec *LINK)
+void cmdelse(struct LOC_exec* LINK)
 {
 	LINK->Token = NULL;
 }
 
 //*****************************************************************************
 
-BOOL skiploop(long up, long dn, struct LOC_exec *LINK)
+BOOL skiploop(long up, long dn, struct LOC_exec* LINK)
 {
 	BOOL Result;
-	register long i;
-	linerec *saveline;
+	long i;
+	linerec* saveline;
 
 	saveline = stmtline;
 	i = 0;
@@ -3373,17 +3346,17 @@ BOOL skiploop(long up, long dn, struct LOC_exec *LINK)
 		LINK->Token = LINK->Token->next;
 	} while (i >= 0);
 	Result = TRUE;
-  _L1:
+_L1:
 	return Result;
 }
 
 //*****************************************************************************
 
-void cmdfor(struct LOC_exec *LINK)
+void cmdfor(struct LOC_exec* LINK)
 {
-	looprec *l, lr;
-	linerec *saveline;
-	register long i, j;
+	looprec* l, lr;
+	linerec* saveline;
+	long i, j;
 
 	lr.vp = findvar(LINK);
 	if (lr.vp->IsStringVar)
@@ -3403,7 +3376,8 @@ void cmdfor(struct LOC_exec *LINK)
 	lr.hometok = LINK->Token;
 	lr.kind = FORLOOP;
 	lr.next = loopbase;
-	if (lr.step >= 0 && *lr.vp->AddressOfDoubleVar > lr.max || lr.step <= 0 && *lr.vp->AddressOfDoubleVar < lr.max)
+	//if (lr.step >= 0 && *lr.vp->AddressOfDoubleVar > lr.max || lr.step <= 0 && *lr.vp->AddressOfDoubleVar < lr.max)
+	if ((lr.step >= 0 && *lr.vp->AddressOfDoubleVar > lr.max) || (lr.step <= 0 && *lr.vp->AddressOfDoubleVar < lr.max))
 	{
 		saveline = stmtline;
 		i = 0;
@@ -3439,18 +3413,18 @@ void cmdfor(struct LOC_exec *LINK)
 		skiptoeos(LINK);
 		return;
 	}
-	l = (looprec *)calloc(sizeof(looprec), 1);
+	l = (looprec*)safe_calloc(sizeof(looprec), 1);
 	*l = lr;
 	loopbase = l;
 }
 
 //*****************************************************************************
 
-void cmdnext(struct LOC_exec *LINK)
+void cmdnext(struct LOC_exec* LINK)
 {
-	varrec *v;
+	varrec* v;
 	BOOL found;
-	looprec *l, *WITH;
+	looprec* l, * WITH;
 
 	if (!IsEndOfStatement(LINK))
 		v = findvar(LINK);
@@ -3486,11 +3460,11 @@ void cmdnext(struct LOC_exec *LINK)
 	loopbase = l;
 }
 
-void cmdwhile(struct LOC_exec *LINK)
+void cmdwhile(struct LOC_exec* LINK)
 {
-	looprec *l;
+	looprec* l;
 
-	l = (looprec *)calloc(sizeof(looprec), 1);
+	l = (looprec*)safe_calloc(sizeof(looprec), 1);
 	l->next = loopbase;
 	loopbase = l;
 	l->kind = WHILELOOP;
@@ -3508,11 +3482,11 @@ void cmdwhile(struct LOC_exec *LINK)
 	skiptoeos(LINK);
 }
 
-void cmdwend(struct LOC_exec *LINK)
+void cmdwend(struct LOC_exec* LINK)
 {
-	tokenrec *tok;
-	linerec *tokline;
-	looprec *l;
+	tokenrec* tok;
+	linerec* tokline;
+	looprec* l;
 	BOOL found;
 
 	do
@@ -3555,21 +3529,21 @@ void cmdwend(struct LOC_exec *LINK)
 
 //*****************************************************************
 
-void cmddo(struct LOC_exec *LINK)
+void cmddo(struct LOC_exec* LINK)
 {
-	looprec *l;
+	looprec* l;
 
-	l = (looprec *)calloc(sizeof(looprec), 1);
+	l = (looprec*)safe_calloc(sizeof(looprec), 1);
 	l->next = loopbase;
 	loopbase = l;
-//*****************************************************************
-//    skip over WHILE keyword token ... added by Kevin Diggins
-//*****************************************************************
+	//*****************************************************************
+	//    skip over WHILE keyword token ... added by Kevin Diggins
+	//*****************************************************************
 
 	if (!IsEndOfStatement(LINK))
 		RequireToken(tokwhile, LINK);
 
-//*****************************************************************
+	//*****************************************************************
 	l->kind = WHILELOOP;
 	l->homeline = stmtline;
 	l->hometok = LINK->Token;
@@ -3588,11 +3562,11 @@ void cmddo(struct LOC_exec *LINK)
 
 //*****************************************************************
 
-void cmdloop(struct LOC_exec *LINK)
+void cmdloop(struct LOC_exec* LINK)
 {
-	tokenrec *tok;
-	linerec *tokline;
-	looprec *l;
+	tokenrec* tok;
+	linerec* tokline;
+	looprec* l;
 	BOOL found;
 
 	do
@@ -3608,23 +3582,22 @@ void cmdloop(struct LOC_exec *LINK)
 			free(loopbase);
 			loopbase = l;
 		}
-	}
-	while (!found);
+	} while (!found);
 
-//*****************************************************************************
-//        skip over UNTIL keyword token ... added by Kevin Diggins
-//*****************************************************************************
+	//*****************************************************************************
+	//        skip over UNTIL keyword token ... added by Kevin Diggins
+	//*****************************************************************************
 
 	if (!IsEndOfStatement(LINK))
 		RequireToken(tokuntil, LINK);
 
-//*****************************************************************************
+	//*****************************************************************************
 	if (!IsEndOfStatement(LINK))
 	{
 		if (DoubleExpression(LINK) != 0)
 			found = FALSE;
 	}
-//*****************************************************************************
+	//*****************************************************************************
 	tok = LINK->Token;
 	tokline = stmtline;
 
@@ -3652,10 +3625,10 @@ void cmdloop(struct LOC_exec *LINK)
 
 //*****************************************************************
 
-void cmdgosub(struct LOC_exec *LINK)
+void cmdgosub(struct LOC_exec* LINK)
 {
-	looprec *l;
-	l = (looprec *)calloc(sizeof(looprec), 1);
+	looprec* l;
+	l = (looprec*)safe_calloc(sizeof(looprec), 1);
 	l->next = loopbase;
 	loopbase = l;
 	l->kind = GOSUBLOOP;
@@ -3666,9 +3639,9 @@ void cmdgosub(struct LOC_exec *LINK)
 
 //*****************************************************************
 
-void cmdreturn(struct LOC_exec *LINK)
+void cmdreturn(struct LOC_exec* LINK)
 {
-	looprec *l;
+	looprec* l;
 	BOOL found;
 
 	do
@@ -3693,10 +3666,10 @@ void cmdreturn(struct LOC_exec *LINK)
 
 //*****************************************************************
 
-void cmdread(struct LOC_exec *LINK)
+void cmdread(struct LOC_exec* LINK)
 {
-	varrec *v;
-	tokenrec *tok;
+	varrec* v;
+	tokenrec* tok;
 	BOOL found;
 
 	do
@@ -3743,14 +3716,14 @@ void cmdread(struct LOC_exec *LINK)
 
 //*****************************************************************
 
-void cmddata(struct LOC_exec *LINK)
+void cmddata(struct LOC_exec* LINK)
 {
 	skiptoeos(LINK);
 }
 
 //*****************************************************************
 
-void cmdrestore(struct LOC_exec *LINK)
+void cmdrestore(struct LOC_exec* LINK)
 {
 	if (IsEndOfStatement(LINK))
 		RestoreData();
@@ -3763,18 +3736,18 @@ void cmdrestore(struct LOC_exec *LINK)
 
 //****************************************************************
 
-void cmdlocate(struct LOC_exec *LINK)
+void cmdlocate(struct LOC_exec* LINK)
 {
-	register int x, y;
+	int x, y;
 	y = IntegerExpression(LINK);
 	RequireToken(tokcomma, LINK);
 	x = IntegerExpression(LINK);
 	locate(y, x);
 }
 
-void cmdgotoxy(struct LOC_exec *LINK)
+void cmdgotoxy(struct LOC_exec* LINK)
 {
-	register int x, y;
+	int x, y;
 	x = IntegerExpression(LINK);
 	RequireToken(tokcomma, LINK);
 	y = IntegerExpression(LINK);
@@ -3782,13 +3755,13 @@ void cmdgotoxy(struct LOC_exec *LINK)
 }
 //****************************************************************
 
-static void cmdmsgbox(struct LOC_exec *LINK)
+static void cmdmsgbox(struct LOC_exec* LINK)
 {
-	char *Tmp1;
-	char *Tmp2;
+	char* Tmp1;
+	char* Tmp2;
 
-	Tmp1 = (char *)calloc(MAXSTRINGVAR, 1);
-	Tmp2 = (char *)calloc(MAXSTRINGVAR, 1);
+	Tmp1 = (char*)safe_calloc(MAXSTRINGVAR, 1);
+	Tmp2 = (char*)safe_calloc(MAXSTRINGVAR, 1);
 	Tmp1 = StringExpression(LINK);
 	RequireToken(tokcomma, LINK);
 	Tmp2 = StringExpression(LINK);
@@ -3799,21 +3772,21 @@ static void cmdmsgbox(struct LOC_exec *LINK)
 
 //****************************************************************
 
-static void cmdcolor(struct LOC_exec *LINK)
+static void cmdcolor(struct LOC_exec* LINK)
 {
-	register long fg, bg;
-	fg = (long)IntegerExpression(LINK);
+	long fg, bg;
+	fg = IntegerExpression(LINK);
 	RequireToken(tokcomma, LINK);
-	bg = (long)IntegerExpression(LINK);
+	bg = IntegerExpression(LINK);
 	color(fg, bg);
 }
 
 //****************************************************************
 
-static void cmdshell(struct LOC_exec *LINK)
+static void cmdshell(struct LOC_exec* LINK)
 {
-	char *Tmp1;
-	Tmp1 = (char *)calloc(MAXSTRINGVAR, 1);
+	char* Tmp1;
+	Tmp1 = (char*)safe_calloc(MAXSTRINGVAR, 1);
 	Tmp1 = StringExpression(LINK);
 	system(Tmp1);
 	free(Tmp1);
@@ -3821,22 +3794,22 @@ static void cmdshell(struct LOC_exec *LINK)
 
 //****************************************************************
 
-static void cmdeval(struct LOC_exec *LINK)
+static void cmdeval(struct LOC_exec* LINK)
 {
-	strcpy(inbuf, trim(StringExpression(LINK)));
-	ParseInput(&buf);
-	stmttok = buf;
+	strcpy(G_inbuf, trim(StringExpression(LINK)));
+	ParseInput(&tr_buf);
+	stmttok = tr_buf; // Execute() uses a copy of buf, via stmttok
 	if (stmttok != NULL)
 		Execute();
-	DisposeTokens(&buf);
+	DisposeTokens(&tr_buf);
 }
 
 //****************************************************************
 
-static void cmdkill(struct LOC_exec *LINK)
+static void cmdkill(struct LOC_exec* LINK)
 {
-	char *Tmp1;
-	Tmp1 = (char *)calloc(MAXSTRINGVAR, 1);
+	char* Tmp1;
+	Tmp1 = (char*)safe_calloc(MAXSTRINGVAR, 1);
 	Tmp1 = StringExpression(LINK);
 	DeleteFile(Tmp1);
 	free(Tmp1);
@@ -3844,15 +3817,15 @@ static void cmdkill(struct LOC_exec *LINK)
 
 //****************************************************************
 
-void cmdon(struct LOC_exec *LINK)
+void cmdon(struct LOC_exec* LINK)
 {
-	register long i;
-	looprec *l;
+	long i;
+	looprec* l;
 
 	i = IntegerExpression(LINK);
 	if (LINK->Token != NULL && LINK->Token->kind == tokgosub)
 	{
-		l = (looprec *)calloc(sizeof(looprec), 1);
+		l = (looprec*)safe_calloc(sizeof(looprec), 1);
 		l->next = loopbase;
 		loopbase = l;
 		l->kind = GOSUBLOOP;
@@ -3883,10 +3856,10 @@ void cmdon(struct LOC_exec *LINK)
 
 //****************************************************************
 
-void cmddim(struct LOC_exec *LINK)
+void cmddim(struct LOC_exec* LINK)
 {
-	register long i, j, k;
-	varrec *v;
+	long i, j, k;
+	varrec* v;
 	BOOL done;
 
 	do
@@ -3923,59 +3896,202 @@ void cmddim(struct LOC_exec *LINK)
 
 			if (!done)
 				RequireToken(tokcomma, LINK);
-		}
-		while (!done);
+		} while (!done);
 
 		LINK->Token = LINK->Token->next;
 		v->numdims = i;
 
 		if (v->IsStringVar)	// example: DIM A$(100) will create an array of NULL 32-bit pointers
 		{
-			v->sarr = (char **)calloc(j * 4, 1);
+			v->sarr = (char**)safe_calloc(j, sizeof(char*));
 			for (i = 0; i < j; i++)
 				v->sarr[i] = NULL;
 		}
 		else
 		{
-			v->arr = (double *)calloc(j * 8, 1);
+			v->arr = (double*)safe_calloc(j, sizeof(double));
 			for (i = 0; i < j; i++)
 				v->arr[i] = 0.0;
 		}
 		if (!IsEndOfStatement(LINK))
 			RequireToken(tokcomma, LINK);
-	}
-	while (!IsEndOfStatement(LINK));
+	} while (!IsEndOfStatement(LINK));
 }
+
+
+
+//*****************************************************************************
+
+void cmdfunction(struct LOC_exec* LINK)
+{
+	funcrec* f;
+	varrec* v;
+
+	// Allocate new function record
+	f = (funcrec*)safe_calloc(1, sizeof(funcrec));
+	f->next = funcbase;
+	funcbase = f;
+
+	// Get function name
+	if (LINK->Token == NULL || LINK->Token->kind != tokvar)
+		SyntaxError();
+
+	v = LINK->Token->vp;
+	strcpy(f->name, v->name);
+	f->IsStringFunc = v->IsStringVar;
+	LINK->Token = LINK->Token->next;
+
+	// Parse parameters
+	f->numparams = 0;
+	if (LINK->Token != NULL && LINK->Token->kind == toklp) {
+		LINK->Token = LINK->Token->next;  // Skip '('
+
+		// Check if there are parameters (not immediately a closing paren)
+		if (LINK->Token != NULL && LINK->Token->kind != tokrp) {
+			while (LINK->Token != NULL && LINK->Token->kind != tokrp) {
+				if (LINK->Token->kind != tokvar)
+					SyntaxError();
+
+				if (f->numparams >= MAXDIMS)
+					Abort("Too many function parameters");
+
+				strcpy(f->paramnames[f->numparams], LINK->Token->vp->name);
+				f->numparams++;
+
+				LINK->Token = LINK->Token->next;
+
+				if (LINK->Token != NULL && LINK->Token->kind == tokcomma)
+					LINK->Token = LINK->Token->next;
+			}
+		}
+
+		// Require closing parenthesis
+		RequireToken(tokrp, LINK);
+	}
+
+	// Expect = sign
+	RequireToken(tokeq, LINK);
+
+	// Store the rest of the line as the function body
+	tokenrec* body_start = NULL;
+	tokenrec* prev = NULL;
+
+	while (LINK->Token != NULL && LINK->Token->kind != tokcolon) {
+		tokenrec* t = (tokenrec*)safe_calloc(1, sizeof(tokenrec));
+
+		// Copy token data
+		t->kind = LINK->Token->kind;
+		t->vp = LINK->Token->vp;
+		t->num = LINK->Token->num;
+		t->BadSyntaxChar = LINK->Token->BadSyntaxChar;
+		t->next = NULL;
+
+		// Deep copy strings
+		if (t->kind == tokstr || t->kind == tokrem) {
+			t->sp = (char*)safe_calloc(MAXSTRINGVAR, 1);
+			strcpy(t->sp, LINK->Token->sp);
+		}
+		else {
+			t->sp = NULL;
+		}
+
+		if (body_start == NULL) {
+			body_start = t;
+		}
+		else {
+			prev->next = t;
+		}
+		prev = t;
+
+		LINK->Token = LINK->Token->next;
+	}
+
+	f->body = body_start;
+}
+
+//*****************************************************************************
+
+funcrec* FindFunction(char* name)
+{
+	funcrec* f = funcbase;
+	while (f != NULL && _stricmp(f->name, name))
+		f = f->next;
+	return f;
+}
+
+//*****************************************************************************
+
+void ListFunctions(void)
+{
+	funcrec* f = funcbase;
+	int i;
+
+	if (f == NULL) {
+		printf("No user-defined functions.\n");
+		return;
+	}
+
+	printf("\n--- User-Defined Functions ---\n");
+
+	while (f != NULL) {
+		color(KWCOLOR, BGCOLOR);
+		printf("FUNCTION ");
+		color(FGCOLOR, BGCOLOR);
+		printf("%s", mcase(f->name));
+
+		if (f->numparams > 0) {
+			printf("(");
+			for (i = 0; i < f->numparams; i++) {
+				printf("%s", mcase(f->paramnames[i]));
+				if (i < f->numparams - 1)
+					printf(", ");
+			}
+			printf(")");
+		}
+
+		printf(" = ");
+		ListTokens(stdout, f->body);
+		printf("\n");
+
+		f = f->next;
+	}
+	printf("\n");
+}
+
+
+
+
+
 
 //****************************************************************
 
 void Execute(void)
 {
 	struct LOC_exec V;
-	char *ioerrmsg;
+	char* ioerrmsg;
 	char Str1[2048] = { 0 };
 	Esc_Code = 0;
-//*********************************************
+	//*********************************************
 	TRY(try1);
-//*********************************************
+	//*********************************************
 	do
 	{
 		do
 		{
-//*****************************************************************
-//  Stop a runaway program by pressing the ESCape key  (by MrBcx)
-//*****************************************************************
+			//*****************************************************************
+			//  Stop a runaway program by pressing the ESCape key  (by MrBcx)
+			//*****************************************************************
 
-			if (kbhit())
+			if (_kbhit())
 			{
-				int asccodereturn = getch();
+				int asccodereturn = _getch();
 				if (asccodereturn == 27)
 				{
 					Esc_Code = -20;
 					goto _Ltry1;
 				}
 			}
-//****************************************************************
+			//****************************************************************
 			V.gotoflag = FALSE;
 			V.elseflag = FALSE;
 			while (stmttok != NULL && stmttok->kind == tokcolon)
@@ -3987,230 +4103,234 @@ void Execute(void)
 				V.Token = V.Token->next;
 				switch (stmttok->kind)
 				{
-					case tokrem:
-						/* blank case */
-						break;
+				case tokrem:
+					/* blank case */
+					break;
 
-					case tokokcancel:
-						cmdokcancel(&V);
-						break;
+				case tokfunction:
+					cmdfunction(&V);
+					break;
 
-					case tokclear:
-						ClearAll();
-						break;
+				case tokokcancel:
+					cmdokcancel(&V);
+					break;
 
-					case tokcls:
-						cls();
-						break;
+				case tokclear:
+					ClearAll();
+					break;
 
-					case toklist:
-						cmdlist(&V);
-						break;
+				case tokcls:
+					cls();
+					break;
 
-					case toksleep:
-						cmdsleep(&V);
-						break;
+				case toklist:
+					cmdlist(&V);
+					break;
 
-					case toktextmode:
-						cmdtextmode(&V);
-						break;
+				case toksleep:
+					cmdsleep(&V);
+					break;
 
-					case tokrandomize:
-						cmdrandomize(&V);
-						break;
+				case toktextmode:
+					cmdtextmode(&V);
+					break;
 
-					case toksetcursor:
-						cmdsetcursor(&V);
-						break;
+				case tokrandomize:
+					cmdrandomize(&V);
+					break;
 
-					case tokrun:
-						cmdrun(&V);
-						break;
+				case toksetcursor:
+					cmdsetcursor(&V);
+					break;
 
-					case toknew:
-						cmdnew(&V);
-						break;
+				case tokrun:
+					cmdrun(&V);
+					break;
 
-					case tokload:
-						cmdload(FALSE, StringExpressionEx(Str1, &V), &V);
-						break;
+				case toknew:
+					cmdnew(&V);
+					break;
 
-					case tokmerge:
-						cmdload(TRUE, StringExpressionEx(Str1, &V), &V);
-						break;
+				case tokload:
+					cmdload(FALSE, StringExpressionEx(Str1, &V), &V);
+					break;
 
-					case toksave:
-						cmdsave(&V);
-						break;
+				case tokmerge:
+					cmdload(TRUE, StringExpressionEx(Str1, &V), &V);
+					break;
 
-					case tokbye:
-						cmdbye();
-						break;
+				case toksave:
+					cmdsave(&V);
+					break;
 
-					case tokdel:
-						cmddel(&V);
-						break;
+				case tokbye:
+					cmdbye();
+					break;
 
-					case tokrenum:
-						cmdrenum(&V);
-						break;
+				case tokdel:
+					cmddel(&V);
+					break;
 
-					case toklet:
-						cmdlet(FALSE, &V);
-						break;
+				case tokrenum:
+					cmdrenum(&V);
+					break;
 
-					case tokvar:
-						cmdlet(TRUE, &V);
-						break;
+				case toklet:
+					cmdlet(FALSE, &V);
+					break;
 
-					case tokprint:
-						cmdprint(&V);
-						break;
+				case tokvar:
+					cmdlet(TRUE, &V);
+					break;
 
-					case tokfprint:
-						cmdfprint(&V);
-						break;
+				case tokprint:
+					cmdprint(&V);
+					break;
 
-					case tokflineinput:
-						cmdflineinput(&V);
-						break;
+				case tokfprint:
+					cmdfprint(&V);
+					break;
 
-					case tokget:
-						cmdget(&V);
-						break;
+				case tokflineinput:
+					cmdflineinput(&V);
+					break;
 
-					case tokput:
-						cmdput(&V);
-						break;
+				case tokget:
+					cmdget(&V);
+					break;
 
-					case tokseek:
-						cmdseek(&V);
-						break;
+				case tokput:
+					cmdput(&V);
+					break;
 
-					case tokclose:
-						cmdclose(&V);
-						break;
+				case tokseek:
+					cmdseek(&V);
+					break;
 
-					case tokrewind:
-						cmdrewind(&V);
-						break;
+				case tokclose:
+					cmdclose(&V);
+					break;
 
-					case tokinput:
-						cmdinput(&V);
-						break;
+				case tokrewind:
+					cmdrewind(&V);
+					break;
 
-					case tokgoto:
-						cmdgoto(&V);
-						break;
+				case tokinput:
+					cmdinput(&V);
+					break;
 
-					case tokif:
-						cmdif(&V);
-						break;
+				case tokgoto:
+					cmdgoto(&V);
+					break;
 
-					case tokelse:
-						cmdelse(&V);
-						break;
+				case tokif:
+					cmdif(&V);
+					break;
 
-					case tokend:
-						cmdend(&V);
-						break;
+				case tokelse:
+					cmdelse(&V);
+					break;
 
-					case tokstop:
-						Esc_Code = -20;
-						goto _Ltry1;
-						break;
+				case tokend:
+					cmdend(&V);
+					break;
 
-					case tokfor:
-						cmdfor(&V);
-						break;
+				case tokstop:
+					Esc_Code = -20;
+					goto _Ltry1;
+					break;
 
-					case toknext:
-						cmdnext(&V);
-						break;
+				case tokfor:
+					cmdfor(&V);
+					break;
 
-					case tokwhile:
-						cmdwhile(&V);
-						break;
+				case toknext:
+					cmdnext(&V);
+					break;
 
-					case tokwend:
-						cmdwend(&V);
-						break;
+				case tokwhile:
+					cmdwhile(&V);
+					break;
 
-					case tokdo:
-						cmddo(&V);
-						break;
+				case tokwend:
+					cmdwend(&V);
+					break;
 
-					case tokloop:
-						cmdloop(&V);
-						break;
+				case tokdo:
+					cmddo(&V);
+					break;
 
-					case tokgosub:
-						cmdgosub(&V);
-						break;
+				case tokloop:
+					cmdloop(&V);
+					break;
 
-					case tokreturn:
-						cmdreturn(&V);
-						break;
+				case tokgosub:
+					cmdgosub(&V);
+					break;
 
-					case tokread:
-						cmdread(&V);
-						break;
+				case tokreturn:
+					cmdreturn(&V);
+					break;
 
-					case tokdata:
-						cmddata(&V);
-						break;
+				case tokread:
+					cmdread(&V);
+					break;
 
-					case tokrestore:
-						cmdrestore(&V);
-						break;
+				case tokdata:
+					cmddata(&V);
+					break;
 
-					case toklocate:
-						cmdlocate(&V);
-						break;
+				case tokrestore:
+					cmdrestore(&V);
+					break;
 
-					case tokgotoxy:
-						cmdgotoxy(&V);
-						break;
+				case toklocate:
+					cmdlocate(&V);
+					break;
 
-					case tokmsgbox:
-						cmdmsgbox(&V);
-						break;
+				case tokgotoxy:
+					cmdgotoxy(&V);
+					break;
 
-					case tokcolor:
-						cmdcolor(&V);
-						break;
+				case tokmsgbox:
+					cmdmsgbox(&V);
+					break;
 
-					case tokshell:
-						cmdshell(&V);
-						break;
+				case tokcolor:
+					cmdcolor(&V);
+					break;
 
-					case tokeval:
-						cmdeval(&V);
-						break;
+				case tokshell:
+					cmdshell(&V);
+					break;
 
-					case tokkill:
-						cmdkill(&V);
-						break;
+				case tokeval:
+					cmdeval(&V);
+					break;
 
-					case tokopen:
-						cmdopen(&V);
-						break;
+				case tokkill:
+					cmdkill(&V);
+					break;
 
-					case tokon:
-						cmdon(&V);
-						break;
+				case tokopen:
+					cmdopen(&V);
+					break;
 
-					case tokswap:
-						cmdswap(&V);
-						break;
+				case tokon:
+					cmdon(&V);
+					break;
 
-					case tokdim:
-						cmddim(&V);
-						break;
+				case tokswap:
+					cmdswap(&V);
+					break;
 
-					default:
-						Abort("Syntax error!");
-						break;
+				case tokdim:
+					cmddim(&V);
+					break;
+
+				default:
+					Abort("Syntax error!");
+					break;
 				}
 			}
 
@@ -4233,7 +4353,7 @@ void Execute(void)
 	} while (stmtline != NULL);
 	//*********************************************
 	CATCH(try1, _Ltry1);
-//*********************************************
+	//*********************************************
 	if (Esc_Code == -20)
 		printf("Break");
 
@@ -4241,163 +4361,303 @@ void Execute(void)
 	{
 		switch (Esc_Code)
 		{
-			case -4:
-				printf("Integer overflow");
-				break;
+		case -4:
+			printf("Integer overflow");
+			break;
 
-			case -5:
-				printf("Divide by zero");
-				break;
+		case -5:
+			printf("Divide by zero");
+			break;
 
-			case -6:
-				printf("Double math overflow");
-				break;
+		case -6:
+			printf("Double math overflow");
+			break;
 
-			case -7:
-				printf("Double math underflow");
-				break;
+		case -7:
+			printf("Double math underflow");
+			break;
 
-			case -8:
-			case -19:
-			case -18:
-			case -17:
-			case -16:
-			case -15:
-				printf("Value range error");
-				break;
+		case -8:
+		case -19:
+		case -18:
+		case -17:
+		case -16:
+		case -15:
+			printf("Value range error");
+			break;
 
-			case -10:
-				ioerrmsg = (char *)calloc(MAXSTRINGVAR, 1);
-				sprintf(ioerrmsg, "I/O Error %d", (int)io_Result);
-				printf("%s", ioerrmsg);
-				free(ioerrmsg);
-				break;
+		case -10:
+			ioerrmsg = (char*)safe_calloc(MAXSTRINGVAR, 1);
+			sprintf(ioerrmsg, "I/O Error %d", (int)io_Result);
+			printf("%s", ioerrmsg);
+			free(ioerrmsg);
+			break;
 
-			default:
-				Critical_Escape(Esc_Code);
-				break;
+		default:
+			Critical_Escape(Esc_Code);
+			break;
 		}
 	}
 	if (stmtline != NULL)
 		printf(" line number: %ld", stmtline->num);
 
 	putchar('\n');
-//*********************************************
+	//*********************************************
 	END_TRY(try1);
-//*********************************************
+	//*********************************************
 }
 
 //****************************************************************
 //                     Begin BCX Library Functions
 //****************************************************************
 
-char *BCX_TmpStr(size_t Bites)
+char* BCX_TmpStr(size_t Bites)
 {
 	static int StrCnt;
-	static char *StrFunc[2048] = { 0 };
+	static char* StrFunc[2048] = { 0 };
 
 	StrCnt = (StrCnt + 1) & 2047;
 	if (StrFunc[StrCnt])
 		free(StrFunc[StrCnt]);
-	return StrFunc[StrCnt] = (char *)calloc(Bites + 1, sizeof(char));
+	return StrFunc[StrCnt] = (char*)safe_calloc(Bites + 1, sizeof(char));
 }
 
 //****************************************************************
 
 double Round(double n, int d)
 {
-	return (floor((n) * pow(10.0, (d)) + 0.5) / pow(10.0, (d)));
+	return (floor((n)*pow(10.0, (d)) + 0.5) / pow(10.0, (d)));
 }
 
 //****************************************************************
 
-char *Using(char *Mask, double Num)
+char *Using(char * szMask, double Num)
 {
-	int Spaces = 0;
-	int CntDec = 0;
-	int Decimals = 0;
-	int Dollar = 0;
-	char *BCX_RetStr = BCX_TmpStr(100);
-	char Buf_1[100] = { 0 };
-	char *p = Mask;
-	char *r;
-	int len;
-
-	while (*p)
-	{
-		if (*p == 36)
-			Dollar++;
-		if (*p == 32)
-			Spaces++;
-		if ((*p == 32 || *p == 35) && CntDec)
-			Decimals++;
-		if (*p == 46)
-			CntDec = 1;
-		p++;
-	}
-	sprintf(Buf_1, "%1.*f", Decimals, Num);
-
-	len = strlen(Buf_1) - Decimals - (Decimals > 0 ? 1 : 0);
-	r = BCX_RetStr + Dollar + Spaces;
-	p = Buf_1;
-	while (*p)
-	{
-		*r++ = *p++;
-		if (--len > 2 && *(p - 1) != '-' && len % 3 == 0)
-		{
-			*r++ = ',';
-		}
-	}
-
-	if (Dollar)
-		BCX_RetStr[Spaces] = 36;
-
-	for (len = 0; len < Spaces; len++)
-	{
-		BCX_RetStr[len] = 32;
-	}
-	return BCX_RetStr;
+  int CntDec = 0;    // Count the number of "0" to left pad the result
+  int Decimals = 0;  // Count ALL digits RIGHT of the decimal point
+  int Dollar = 0;    // Flag to LEFT prepend "$" symbol
+  int Percent = 0;   // Flag to convert result to percent
+  int SN = 0;        // Flag to use Sci Notation 
+  int SN_Digits = 0; // Count of digits RIGHT of decimal
+  int Spaces = 0;    // Flag for using spaces padding
+  int Zeros = 0;     // Flag for using zero padding 
+ 
+  char *BCX_RetStr = BCX_TmpStr(256);
+  char Buf_1[256]={0};
+  LPCTSTR p = szMask;
+  int len;
+ 
+  // First pass: analyze the format mask
+ 
+  while (*p)
+  {
+    if (*p == 36)  Dollar++;      // $
+    if (Dollar>1)  Dollar=1;      // Restrict
+    if (*p == 37)  Percent++;     // %
+    if (Percent>1) Percent=1;     // Restrict
+    if (*p == 32)  Spaces++;      // Space
+ 
+    // Track zero padding before decimal
+    if (*p == 48 && !CntDec)  Zeros++;
+ 
+    // Count decimal places (spaces, # or 0 after decimal point)
+    if ((*p == 32 || *p == 35 || *p == 48) && CntDec)  Decimals++;
+ 
+    // Count # symbols after decimal for SN precision
+    if (*p == 35 && SN && CntDec)  SN_Digits++;
+ 
+    if (*p == 46)  CntDec = 1;    // Decimal point
+ 
+    if (*p == 94)  SN++;          // ^ is for scientific notation
+ 
+    p++;
+  }
+ 
+  // Second pass: Assemble the resulting string
+ 
+  if (SN)                         // Process SN and return
+  {
+    char Tmp[64]={0};
+    char fmt[16]={0};
+    
+    // Use SN_Digits for precision after decimal, add 1 for the digit before decimal
+    int precision = SN_Digits;
+    sprintf(fmt, "%%.%dE", precision);
+    sprintf(Tmp, fmt, (double)Num);
+    
+    // Clean up scientific notation
+    while (instr(Tmp, "0E"))
+      strcpy(Tmp, iReplace(Tmp, "0E", "E"));
+    while (instr(Tmp, "E+00"))
+      strcpy(Tmp, iReplace(Tmp, "E+00", "E+0"));
+    while (instr(Tmp, "E-00"))
+      strcpy(Tmp, iReplace(Tmp, "E-00", "E-0"));
+    strcpy(BCX_RetStr, Tmp);
+    return BCX_RetStr;
+  }
+ 
+  if(Percent) Num = Num * 100.0;
+  // Format the number with specified decimals
+  sprintf(Buf_1, "%1.*f", Decimals, Num);
+ 
+  // Find integer part length
+  char *decimal_pos = strchr(Buf_1, '.');
+  int num_int_digits = decimal_pos ? (int)(decimal_pos - Buf_1) : (int)strlen(Buf_1);
+ 
+  // Adjust for negative sign
+  int has_negative = (Buf_1[0] == '-');
+  if (has_negative)
+    num_int_digits--;
+ 
+  // Initialize the return string
+  memset(BCX_RetStr, 0, 256);
+ 
+  int zero_pad = 0;
+ 
+  // Calculate zero padding (apply only if needed)
+  if (Zeros > 0 && Zeros > num_int_digits)
+    zero_pad = Zeros - num_int_digits;
+ 
+  // Position for the start of the number
+  int pos = Dollar + Spaces + zero_pad;
+ 
+  // Copy the number to the return string
+  if (has_negative)
+  {
+    if (Zeros > 0)
+    {
+      // With zero padding, negative goes before zeros
+      BCX_RetStr[Dollar + Spaces] = '-';
+      strcpy(BCX_RetStr + pos, Buf_1 + 1);
+    }
+    else
+    {
+      // Without zero padding, negative stays with number
+      strcpy(BCX_RetStr + pos, Buf_1);
+    }
+  }
+  else
+  {
+    strcpy(BCX_RetStr + pos, Buf_1);
+  }
+ 
+  // Add commas for thousands
+  char temp[256]={0};
+  strcpy(temp, BCX_RetStr);
+ 
+  // Find where the number starts after any potential padding
+  int number_start = Dollar + Spaces + zero_pad;
+ 
+  // Handle negative sign position for proper comma placement
+  if (has_negative && Zeros == 0)
+    number_start++; // Skip past the negative sign for comma placement
+ 
+  // Find integer part end
+  decimal_pos = strchr(temp, '.');
+  int int_end = decimal_pos ? (int)(decimal_pos - temp) : (int)strlen(temp);
+ 
+  // Add commas working backwards, but never insert a comma right after the negative sign
+  for (int i = int_end - 3; i > number_start; i -= 3)
+  {
+    // Ensure we don't place a comma immediately after a negative sign
+    if (i > number_start && !(temp[i-1] == '-'))
+    {
+      memmove(temp + i + 1, temp + i, (int)strlen(temp + i) + 1);
+      temp[i] = ',';
+    }
+  }
+ 
+  strcpy(BCX_RetStr, temp);
+ 
+  // Add dollar sign
+  if (Dollar)
+  {
+    if (Num >= 0)
+    {
+      BCX_RetStr[Spaces] = '$';
+    }
+    else
+    {
+      if (Zeros > 0)
+      {
+        // With zero padding: move negative, then add dollar
+        BCX_RetStr[Spaces] = '-';
+        BCX_RetStr[Spaces + 1] = '$';
+        
+        // Remove duplicate negative sign
+        for (int i = pos; i < (int)strlen(BCX_RetStr); i++)
+        {
+          if (BCX_RetStr[i] == '-')
+          {
+            memmove(BCX_RetStr + i, BCX_RetStr + i + 1, (int)strlen(BCX_RetStr + i));
+            break;
+          }
+        }
+      }
+      else
+      {
+        // Without zero padding: dollar then negative
+        BCX_RetStr[Spaces] = '$';
+      }
+    }
+  }
+ 
+  // Fill leading spaces
+  if (Spaces)
+    memset(BCX_RetStr, ' ', Spaces);
+ 
+  // Fill zeros after spaces but only if needed
+  for (int i = 0; i < zero_pad; i++)
+    BCX_RetStr[Dollar + Spaces + i] = '0';
+ 
+  // Add percent sign if needed
+  if (Percent)
+  {
+    len = (int)strlen(BCX_RetStr);
+    BCX_RetStr[len] = '%';
+    BCX_RetStr[len + 1] = 0;
+  }
+  return BCX_RetStr;
 }
 
 //****************************************************************
 
-char *str(double d)
+char* str(double d)
 {
-	register char *strtmp = BCX_TmpStr(24);
+	char* strtmp = BCX_TmpStr(24);
 	sprintf(strtmp, "% .15G", d);
 	return strtmp;
 }
 //****************************************************************
 
-char *ucase(char *S)
+char* ucase(char* S)
 {
-	register char *strtmp = BCX_TmpStr(strlen(S));
-	return strupr(strcpy(strtmp, S));
+	char* strtmp = BCX_TmpStr((int)strlen(S));
+	return _strupr(strcpy(strtmp, S));
 }
 
 //****************************************************************
 
-char *lcase(char *S)
+char* lcase(char* S)
 {
-	register char *strtmp = BCX_TmpStr(strlen(S));
-	return strlwr(strcpy(strtmp, S));
+	char* strtmp = BCX_TmpStr((int)strlen(S));
+	return _strlwr(strcpy(strtmp, S));
 }
 
 //****************************************************************
 
-char *mcase(char *S)
+char* mcase(char* S)
 {
-	register char *strtmp = BCX_TmpStr(strlen(S) + 1);
-	register char *s = strtmp;
-
+	char* strtmp = BCX_TmpStr((int)strlen(S) + 1);
+	char* s = strtmp;
 	strcpy(strtmp, S);
-	strlwr(strtmp);
+	_strlwr(strtmp);
 	while (*s)
 	{
 		if (islower(*s))
 		{
 			*s -= 32;
-			while (isalpha(*++s)) ;
+			while (isalpha(*++s));
 		}
 		s++;
 	}
@@ -4406,10 +4666,10 @@ char *mcase(char *S)
 
 //****************************************************************
 
-char *left(char *S, int length)
+char* left(char* S, int length)
 {
-	register int tmplen = strlen(S);
-	char *strtmp = BCX_TmpStr(tmplen);
+	int tmplen = (int)strlen(S);
+	char* strtmp = BCX_TmpStr(tmplen);
 
 	strcpy(strtmp, S);
 	if (length > tmplen)
@@ -4421,10 +4681,10 @@ char *left(char *S, int length)
 
 //****************************************************************
 
-char *right(char *S, int length)
+char* right(char* S, int length)
 {
-	int tmplen = strlen(S);
-	char *BCX_RetStr = BCX_TmpStr(tmplen);
+	int tmplen = (int)strlen(S);
+	char* BCX_RetStr = BCX_TmpStr(tmplen);
 
 	tmplen -= length;
 	if (tmplen < 0)
@@ -4434,10 +4694,10 @@ char *right(char *S, int length)
 
 //****************************************************************
 
-char *extract(char *mane, char *match)
+char* extract(char* mane, char* match)
 {
-	register char *a;
-	register char *strtmp = BCX_TmpStr(strlen(mane));
+	char* a;
+	char* strtmp = BCX_TmpStr((int)strlen(mane));
 
 	strcpy(strtmp, mane);
 	a = strstr(mane, match);
@@ -4448,13 +4708,13 @@ char *extract(char *mane, char *match)
 
 //****************************************************************
 
-char *remain(char *mane, char *mat)
+char* remain(char* mane, char* mat)
 {
-	register char *p = strstr(mane, mat);
+	char* p = strstr(mane, mat);
 
 	if (p)
 	{
-		p += (strlen(mat));
+		p += ((int)strlen(mat));
 		return p;
 	}
 	return mane;
@@ -4462,10 +4722,10 @@ char *remain(char *mane, char *mat)
 
 //****************************************************************
 
-char *RemoveStr(char *a, char *b)
+char* RemoveStr(char* a, char* b)
 {
-	register int i, tmplen = strlen(b);
-	register char *strtmp = BCX_TmpStr(strlen(a));
+	int i, tmplen = (int)strlen(b);
+	char* strtmp = BCX_TmpStr(strlen(a));
 
 	strcpy(strtmp, a);
 	while (1)
@@ -4480,13 +4740,12 @@ char *RemoveStr(char *a, char *b)
 
 //****************************************************************
 
-char *iReplace(char *src, char *pat, char *rep)
+char* iReplace(char* src, char* pat, char* rep)
 {
 	size_t patsz, repsz, tmpsz, delta;
-	char *strtmp, *p, *q, *r;
+	char* strtmp, * p, * q, * r;
 
-	if (!src)
-		*src = 0;
+
 	if (!pat || !*pat)
 	{
 		strtmp = BCX_TmpStr(strlen(src));
@@ -4494,19 +4753,18 @@ char *iReplace(char *src, char *pat, char *rep)
 			return NULL;
 		return strcpy(strtmp, src);
 	}
-	if (rep == NULL)
-		*rep = 0;
+
 	repsz = strlen(rep);
 	patsz = strlen(pat);
 	for (tmpsz = 0, p = src; (q = _stristr_(p, pat)) != 0; p = q + patsz)
-		tmpsz += (size_t) (q - p) + repsz;
+		tmpsz += (size_t)(q - p) + repsz;
 	tmpsz += strlen(p);
 	strtmp = BCX_TmpStr(tmpsz);
 	if (!strtmp)
 		return NULL;
 	for (r = strtmp, p = src; (q = _stristr_(p, pat)) != 0; p = q + patsz)
 	{
-		delta = (size_t) (q - p);
+		delta = (size_t)(q - p);
 		strncpy(r, p, delta);
 		r += delta;
 		strcpy(r, rep);
@@ -4518,10 +4776,10 @@ char *iReplace(char *src, char *pat, char *rep)
 
 //****************************************************************
 
-char *trim(char *S)
+char* trim(char* S)
 {
-	register int i = strlen(S);
-	char *strtmp = BCX_TmpStr(i);
+	int i = (int)strlen(S);
+	char* strtmp = BCX_TmpStr(i);
 	strcpy(strtmp, S);
 	while (i--)
 	{
@@ -4536,9 +4794,9 @@ char *trim(char *S)
 
 //****************************************************************
 
-char *enc(char *A)
+char* enc(char* A)
 {
-	register char *BCX_RetStr = BCX_TmpStr(strlen(A) + 3);
+	char* BCX_RetStr = BCX_TmpStr(strlen(A) + 3);
 	int L = 34;
 	int R = 34;
 	sprintf(BCX_RetStr, "%c%s%c%s", L, A, R, "");
@@ -4547,11 +4805,11 @@ char *enc(char *A)
 
 //****************************************************************
 
-char *ltrim(char *S)
+char* ltrim(char* S)
 {
 	if (S[0] == 0)
 		return S;
-	register char *strtmp = BCX_TmpStr(strlen(S));
+	char* strtmp = BCX_TmpStr(strlen(S));
 
 	strcpy(strtmp, S);
 	while (*strtmp == 32)
@@ -4561,25 +4819,25 @@ char *ltrim(char *S)
 
 //****************************************************************
 
-char *rtrim(char *S, char c)
+char* rtrim(char* S, char c)
 {
 	if (S[0] == 0)
 		return S;
-	register int i = strlen(S);
+	int i = (int)strlen(S);
 	while (i > 0 && (S[i - 1] == c || S[i - 1] == 32))
 		i--;
-	char *strtmp = BCX_TmpStr(i);
-	return (char *)memcpy(strtmp, S, i);
+	char* strtmp = BCX_TmpStr(i);
+	return (char*)memcpy(strtmp, S, i);
 }
 
 //****************************************************************
 
-char *timef(void)
+char* timef(void)
 {
 	time_t elapse_time;
-	struct tm *tp;
+	struct tm* tp;
 	char A[256] = { 0 };
-	char *strtmp = BCX_TmpStr(256);
+	char* strtmp = BCX_TmpStr(256);
 	time(&elapse_time);
 	tp = localtime(&elapse_time);
 	A[0] = 0;
@@ -4590,9 +4848,9 @@ char *timef(void)
 
 //****************************************************************
 
-int instr(char *mane, char *match, int offset, int sensflag)
+int instr(char* mane, char* match, int offset, int sensflag)
 {
-	register char *s;
+	char* s;
 
 	if (!mane || !match || !*match || offset > (int)strlen(mane))
 		return 0;
@@ -4605,12 +4863,12 @@ int instr(char *mane, char *match, int offset, int sensflag)
 
 //****************************************************************
 
-char *_stristr_(char *String, char *Pattern)
+char* _stristr_(char* String, char* Pattern)
 {
-	register char *pptr, *sptr, *start;
-	register UINT slen, plen;
+	char* pptr, * sptr, * start;
+	UINT slen, plen;
 
-	for (start = (char *)String, pptr = (char *)Pattern, slen = strlen(String), plen = strlen(Pattern); slen >= plen; start++, slen--)
+	for (start = (char*)String, pptr = (char*)Pattern, slen = (UINT)strlen(String), plen = (UINT)strlen(Pattern); slen >= plen; start++, slen--)
 	{
 		while (toupper(*start) != toupper(*Pattern))
 		{
@@ -4620,7 +4878,7 @@ char *_stristr_(char *String, char *Pattern)
 				return (0);
 		}
 		sptr = start;
-		pptr = (char *)Pattern;
+		pptr = (char*)Pattern;
 		while (toupper(*sptr) == toupper(*pptr))
 		{
 			sptr++;
@@ -4638,8 +4896,8 @@ void locate(int row, int col, int show, int shape)
 {
 	CONSOLE_CURSOR_INFO cci = { 0 };
 
-	cursor.X = col - 1;
-	cursor.Y = row - 1;
+	cursor.X = (SHORT)(col - 1);
+	cursor.Y = (SHORT)(row - 1);
 	SetConsoleCursorPosition(hConsole, cursor);
 	cci.bVisible = show;
 	cci.dwSize = shape;
@@ -4650,7 +4908,7 @@ void locate(int row, int col, int show, int shape)
 
 void color(long fg, long bg)
 {
-	SetConsoleTextAttribute(hConsole, fg + bg * 16);
+	SetConsoleTextAttribute(hConsole, (WORD)fg + (WORD)bg * 16);
 	color_fg = fg;
 	color_bg = bg;
 }
@@ -4663,13 +4921,13 @@ void cls(void)
 	DWORD ccharsWritten;
 	CONSOLE_SCREEN_BUFFER_INFO csbi = { 0 };
 	DWORD ConSize;
-	long attr;
+	WORD attr;
 
 	cursor.X = 0;
 	cursor.Y = 0;
 	GetConsoleScreenBufferInfo(hConsole, &csbi);
 	ConSize = csbi.dwSize.X * csbi.dwSize.Y;
-	attr = color_fg + color_bg * 16;
+	attr = (WORD)(color_fg + color_bg * 16);
 	FillConsoleOutputAttribute(hConsole, attr, ConSize, coordScreen, &ccharsWritten);
 	FillConsoleOutputCharacter(hConsole, 32, ConSize, coordScreen, &ccharsWritten);
 	locate(1, 1, 1);
@@ -4677,28 +4935,36 @@ void cls(void)
 
 //****************************************************************
 
-int like(char *raw, char *pat)
+int like(char* raw, char* pat)
 {
-	char a, b, d;
-	char *r, *p;
+	char a = 0, b = 0, d = 0;
+	char* r, * p;
 	int star = 0;
-
 	while (1)
 	{
 		if ((d = *pat++) == 0)
+		{
 			return (star || !*raw);
+		}
 		else if (d == '*')
+		{
 			star = 1;
+		}
 		else if (d == '?')
 		{
 			if (!*raw++)
+			{
 				return 0;
+			}
 		}
 		else
+		{
 			break;
+		}
 	}
 	b = d;
 	do
+	{
 		if ((a = *raw++) == b)
 		{
 			r = raw;
@@ -4706,38 +4972,50 @@ int like(char *raw, char *pat)
 			do
 			{
 				if ((d = *p++) == '*')
+				{
 					if (like(r, p - 1))
+					{
 						return 1;
+					}
 					else
+					{
 						break;
+					}
+				}
 				else if (!d)
+				{
 					if (!*r)
+					{
 						return 1;
+					}
 					else
+					{
 						break;
-			}
-			while (*r++ == d || d == '?');
+					}
+				}
+			} while (*r++ == d || d == '?');
 		}
-	while (star && a) ;
+	} while (star && a);
 	return 0;
 }
 
+
 //****************************************************************
 
-char *GetFileName(char *Title, char *Filter, int Flag, HWND hWnd, DWORD Flags, char *InitialDir, char *Initfname, int *ExtIdx)
+char* GetFileName(char* Title, char* Filter, int Flag, HWND hWnd, DWORD Flags, char* InitialDir, char* Initfname, int* ExtIdx)
 {
 	OPENFILENAME OpenFileStruct;
 	char Extension[256] = { 0 };
-	int Counter = 0, TmpSize;
-	static char *filename;
-	static int BufSize;
+	UINT Counter = 0, TmpSize;
+	static char* filename;
+	static UINT BufSize;
 
 	TmpSize = ((Flags & OFN_ALLOWMULTISELECT) ? 5000 : MAX_PATH);
 
 	if (TmpSize > BufSize)
 	{
 		BufSize = TmpSize;
-		filename = (char *)realloc(filename, BufSize);
+		filename = (char*)realloc(filename, BufSize);
 	}
 	memset(filename, 0, BufSize);
 	memset(Extension, 0, 256);
@@ -4746,7 +5024,7 @@ char *GetFileName(char *Title, char *Filter, int Flag, HWND hWnd, DWORD Flags, c
 	if (Initfname)
 		strcpy(filename, Initfname);
 
-	for (Counter = 0; Counter <= strlen(Filter); Counter++)
+	for (Counter = 0; Counter <= (UINT)strlen(Filter); Counter++)
 	{
 		if (Filter[Counter] == '|')
 			Extension[Counter] = 0;
@@ -4786,15 +5064,15 @@ char *GetFileName(char *Title, char *Filter, int Flag, HWND hWnd, DWORD Flags, c
 		}
 		else
 		{
-			int len = strlen(filename);
+			int len = (int)strlen(filename);
 			if (filename[len + 1] == 0)
 				return filename;
 
-			char *fname = filename + len;
+			char* fname = filename + len;
 			while (fname[1])
 			{
 				*fname = ',';
-				len = strlen(++fname);
+				len = (UINT)strlen(++fname);
 				fname += len;
 			}
 		}
@@ -4813,6 +5091,7 @@ char *GetFileName(char *Title, char *Filter, int Flag, HWND hWnd, DWORD Flags, c
 
 LRESULT CALLBACK SBProc(int Msg, WPARAM wParam, LPARAM lParam)
 {
+	UNREFERENCED_PARAMETER(lParam);
 	if (Msg == HCBT_ACTIVATE)
 	{
 		static RECT rc1;
@@ -4827,14 +5106,14 @@ LRESULT CALLBACK SBProc(int Msg, WPARAM wParam, LPARAM lParam)
 
 //****************************************************************
 
-void OK_CANCEL(char *Title, char *Message)
+void OK_CANCEL(char* Title, char* Message)
 {
 	MessageBox(GetActiveWindow(), Message, Title, 1);
 }
 
 //****************************************************************
 
-int YN_CANCEL(char *Title, char *Message)
+int YN_CANCEL(char* Title, char* Message)
 {
 	int a = 0;
 	int b = 0;
@@ -4863,9 +5142,9 @@ int YN_CANCEL(char *Title, char *Message)
 
 //****************************************************************
 
-char *InputBox(char *Title, char *Prompt, char *Value)
+char* InputBox(char* Title, char* Prompt, char* Value)
 {
-	char *BCX_RetStr;
+	char* BCX_RetStr;
 	CreatePrompter(Title, Prompt, Value);
 	BCX_RetStr = BCX_TmpStr(strlen(BCX_INPUTBOX_VAL));
 	return strcpy(BCX_RetStr, BCX_INPUTBOX_VAL);
@@ -4873,7 +5152,7 @@ char *InputBox(char *Title, char *Prompt, char *Value)
 
 //****************************************************************
 
-LRESULT CreatePrompter(char *Title, char *Prpt, char *Value)
+LRESULT CreatePrompter(char* Title, char* Prpt, char* Value)
 {
 	LPDLGITEMTEMPLATE lpdit;
 	LPDLGTEMPLATE lpdt;
@@ -4892,93 +5171,86 @@ LRESULT CreatePrompter(char *Title, char *Prpt, char *Value)
 	lpdt = (LPDLGTEMPLATE)GlobalLock(hgbl);
 
 	MyStyle = WS_VISIBLE | DS_NOFAILCREATE | WS_BORDER | DS_CENTER | DS_SETFONT;
-	// ********************************
-	//  Create the InputBox Window
-	// ********************************
+
 	lpdt->style = MyStyle;
 	lpdt->cdit = 4;
 	lpdt->cx = 150;
 	lpdt->cy = 60;
-	lpw = (LPWORD) (lpdt + 1);
+	lpw = (LPWORD)(lpdt + 1);
 	*lpw++ = 0;
 	*lpw++ = 0;
 	lpwsz = (LPWSTR)lpw;
-	lpw += MultiByteToWideChar(CP_ACP, 0, Title, -1, lpwsz, 1 + strlen(Title) * 2);
+	lpw += (WORD)MultiByteToWideChar(CP_ACP, 0, Title, -1, lpwsz, (int)(1 + strlen(Title) * 2));
 	*lpw++ = DEFAULT_PITCH;
 	lpwsz = (LPWSTR)lpw;
-	lpw += MultiByteToWideChar(CP_ACP, 0, "MS Sans Serif", -1, lpwsz, 27);
-	// ********************************
-	//  Create the CANCEL button.
-	// ********************************
+	lpw += (WORD)MultiByteToWideChar(CP_ACP, 0, "MS Sans Serif", -1, lpwsz, 27);
 
+	// CANCEL button
 	lpw = lpwAlign(lpw);
 	lpdit = (LPDLGITEMTEMPLATE)lpw;
 	lpdit->x = 95;
 	lpdit->y = 31;
 	lpdit->cx = 35;
 	lpdit->cy = 12;
-	lpdit->id = ID_CANCEL;
+	lpdit->id = (WORD)ID_CANCEL;
 	lpdit->style = WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP;
-	lpw = (LPWORD) (lpdit + 1);
+	lpw = (LPWORD)(lpdit + 1);
 	*lpw++ = 0xFFFF;
 	*lpw++ = 0x0080;
 	lpwsz = (LPWSTR)lpw;
-	lpw += MultiByteToWideChar(CP_ACP, 0, "CANCEL", -1, lpwsz, 13);
+	lpw += (WORD)MultiByteToWideChar(CP_ACP, 0, "CANCEL", -1, lpwsz, 13);
 	*lpw++ = 0;
-	// ********************************
-	//  Create the OK button.
-	// ********************************
+
+	// OK button
 	lpw = lpwAlign(lpw);
 	lpdit = (LPDLGITEMTEMPLATE)lpw;
 	lpdit->x = 20;
 	lpdit->y = 31;
 	lpdit->cx = 35;
 	lpdit->cy = 12;
-	lpdit->id = ID_OK;
+	lpdit->id = (WORD)ID_OK;
 	lpdit->style = WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON | WS_TABSTOP;
-	lpw = (LPWORD) (lpdit + 1);
+	lpw = (LPWORD)(lpdit + 1);
 	*lpw++ = 0xFFFF;
 	*lpw++ = 0x0080;
 	lpwsz = (LPWSTR)lpw;
-	lpw += MultiByteToWideChar(CP_ACP, 0, "OK", -1, lpwsz, 5);
+	lpw += (WORD)MultiByteToWideChar(CP_ACP, 0, "OK", -1, lpwsz, 5);
 	*lpw++ = 0;
-	// ********************************
-	//  Create the STATIC control
-	// ********************************
+
+	// STATIC control
 	lpw = lpwAlign(lpw);
 	lpdit = (LPDLGITEMTEMPLATE)lpw;
 	lpdit->x = 10;
 	lpdit->y = 5;
 	lpdit->cx = 140;
 	lpdit->cy = 10;
-	lpdit->id = ID_TEXT;
+	lpdit->id = (WORD)ID_TEXT;
 	lpdit->style = WS_CHILD | WS_VISIBLE | SS_LEFT;
-	lpw = (LPWORD) (lpdit + 1);
+	lpw = (LPWORD)(lpdit + 1);
 	*lpw++ = 0xFFFF;
 	*lpw++ = 0x0082;
 	lpwsz = (LPWSTR)lpw;
-	lpw += MultiByteToWideChar(CP_ACP, 0, Prpt, -1, lpwsz, 1 + strlen(Prpt) * 2);
-	*lpw++ = 0;	// no creation data
-	// ********************************
-	//  Create the EDIT control
-	// ********************************
+	lpw += (WORD)MultiByteToWideChar(CP_ACP, 0, Prpt, -1, lpwsz, (int)(1 + strlen(Prpt) * 2));
+	*lpw++ = 0;
+
+	// EDIT control
 	lpw = (LPWORD)lpwAlign(lpw);
 	lpdit = (LPDLGITEMTEMPLATE)lpw;
 	lpdit->x = 10;
 	lpdit->y = 15;
 	lpdit->cx = 130;
 	lpdit->cy = 12;
-	lpdit->id = ID_EDIT;
+	lpdit->id = (WORD)ID_EDIT;
 	lpdit->style = WS_CHILD | WS_TABSTOP | WS_VISIBLE | ES_AUTOHSCROLL | WS_BORDER;
-	lpw = (LPWORD) (lpdit + 1);
+	lpw = (LPWORD)(lpdit + 1);
 	*lpw++ = 0xFFFF;
 	*lpw++ = 0x0081;
 	lpwsz = (LPWSTR)lpw;
-	lpw += MultiByteToWideChar(CP_ACP, 0, Value, -1, lpwsz, 1 + strlen(Value) * 2);
+	lpw += (WORD)MultiByteToWideChar(CP_ACP, 0, Value, -1, lpwsz, (int)(1 + strlen(Value) * 2));
 	*lpw++ = 0;
-	// ******************
+
 	GlobalUnlock(hgbl);
-	hInst = (HINSTANCE) (LONG_PTR)GetWindowLongPtr(0, GWLP_HINSTANCE);
+	hInst = (HINSTANCE)(LONG_PTR)GetWindowLongPtr(0, GWLP_HINSTANCE);
 	ret = DialogBoxIndirect(hInst, (LPDLGTEMPLATE)hgbl, GetActiveWindow(), (DLGPROC)Prompter);
 	GlobalFree(hgbl);
 	return ret;
@@ -4988,6 +5260,7 @@ LRESULT CreatePrompter(char *Title, char *Prpt, char *Value)
 
 LRESULT CALLBACK Prompter(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 {
+	UNREFERENCED_PARAMETER(lParam);
 	int ID_CANCEL = 101;
 	int ID_EDIT = 103;
 	int ID_OK = 104;
@@ -5024,8 +5297,8 @@ LRESULT CALLBACK Prompter(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 
 LPWORD lpwAlign(LPWORD lpIn)
 {
-	BYTE *ul;
-	ul = (BYTE *)lpIn;
+	BYTE* ul;
+	ul = (BYTE*)lpIn;
 	while ((ULONGLONG)ul & 3)
 	{
 		ul++;
@@ -5035,7 +5308,7 @@ LPWORD lpwAlign(LPWORD lpIn)
 
 //****************************************************************
 
-DWORD lof(char *FileName)
+DWORD lof(char* FileName)
 {
 	WIN32_FIND_DATA W32FD;
 	HANDLE hFile;
@@ -5054,50 +5327,50 @@ DWORD lof(char *FileName)
 
 //****************************************************************
 
-char *curdir(void)
+char* curdir(void)
 {
-	char *strtmp = BCX_TmpStr(2048);
+	char* strtmp = BCX_TmpStr(2048);
 	GetCurrentDirectory(1024, strtmp);
 	return strtmp;
 }
 
 //****************************************************************
 
-char *tempdir(void)
+char* tempdir(void)
 {
-	char *strtmp = BCX_TmpStr(2048);
+	char* strtmp = BCX_TmpStr(2048);
 	GetTempPath(1024, strtmp);
 	return strtmp;
 }
 
 //****************************************************************
 
-char *sysdir(void)
+char* sysdir(void)
 {
-	char *strtmp = BCX_TmpStr(2048);
+	char* strtmp = BCX_TmpStr(2048);
 	GetSystemDirectory(strtmp, 2048);
 	return strtmp;
 }
 
 //****************************************************************
 
-char *windir(void)
+char* windir(void)
 {
-	char *strtmp = BCX_TmpStr(2048);
+	char* strtmp = BCX_TmpStr(2048);
 	GetWindowsDirectory(strtmp, 2048);
 	return strtmp;
 }
 
 //****************************************************************
 
-BOOL Exist(char *szFilePath)
+BOOL Exist(char* szFilePath)
 {
 	if (instr(szFilePath, "*") || instr(szFilePath, "?"))
 		return Exist_A(szFilePath);
 	return Exist_B(szFilePath);
 }
 
-BOOL Exist_A(char *szFilePath)
+BOOL Exist_A(char* szFilePath)
 {
 	WIN32_FIND_DATA W32FindData;
 	HANDLE rc;
@@ -5108,7 +5381,7 @@ BOOL Exist_A(char *szFilePath)
 	return TRUE;
 }
 
-BOOL Exist_B(char *szFilePath)
+BOOL Exist_B(char* szFilePath)
 {
 	DWORD ret;
 	ret = GetFileAttributes(szFilePath);
@@ -5119,9 +5392,9 @@ BOOL Exist_B(char *szFilePath)
 
 //****************************************************************
 
-char *findfirst(char *S)
+char* findfirst(char* S)
 {
-	char *strtmp = BCX_TmpStr(strlen(S));
+	char* strtmp = BCX_TmpStr((int)strlen(S));
 	if (FileHandle)
 		FindClose(FileHandle);
 	FileHandle = FindFirstFile(S, &FindData);
@@ -5134,9 +5407,9 @@ char *findfirst(char *S)
 
 //****************************************************************
 
-char *findnext(void)
+char* findnext(void)
 {
-	char *strtmp = BCX_TmpStr(2048);
+	char* strtmp = BCX_TmpStr(2048);
 	int Found = FindNextFile(FileHandle, &FindData);
 	if (Found > 0)
 		strcpy(strtmp, FindData.cFileName);
@@ -5154,85 +5427,45 @@ void Center(HWND hwnd)
 	return;
 }
 
-//****************************************************************
-
-HWND GetConsoleWndHandle(void)
-{
-	HWND hConWnd = { 0 };
-	OSVERSIONINFO os = { 0 };
-	char TempTitle[2048] = { 0 };
-	char ClassName[2048] = { 0 };
-	char OriginalTitle[2048] = { 0 };
-
-	os.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
-	GetVersionEx(&os);
-
-	GetConsoleTitle(OriginalTitle, strlen(OriginalTitle));
-	sprintf(TempTitle, "%u - %u", GetTickCount(), GetCurrentProcessId());
-	SetConsoleTitle(TempTitle);
-	Sleep(40);
-	hConWnd = FindWindow(0, TempTitle);
-	SetConsoleTitle(OriginalTitle);
-
-	if (os.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS)
-	{
-		hConWnd = GetWindow(hConWnd, GW_CHILD);
-		if (hConWnd == NULL)
-		{
-			return 0;
-		}
-		GetClassName(hConWnd, ClassName, strlen(ClassName));
-		while (stricmp(ClassName, "ttyGrab"))
-		{
-			hConWnd = GetNextWindow(hConWnd, GW_HWNDNEXT);
-			if (hConWnd == NULL)
-			{
-				return 0;
-			}
-			GetClassName(hConWnd, ClassName, strlen(ClassName));
-		}
-	}
-	return hConWnd;
-}
 
 //****************************************************************
 
-char *join(int n, ...)
+char* join(int n, ...)
 {
-	register int i = n, tmplen = 0;
-	register char *s_;
-	register char *strtmp;
+	int i = n, tmplen = 0;
+	char* s_;
+	char* strtmp;
 	va_list marker;
-	va_start(marker, n);	// Initialize variable arguments
+	va_start(marker, n);
 	while (i-- > 0)
 	{
-		s_ = va_arg(marker, char *);
+		s_ = va_arg(marker, char*);
 		if (s_)
-			tmplen += strlen(s_);
+			tmplen += (int)strlen(s_);
 	}
 	strtmp = BCX_TmpStr(tmplen);
-	va_end(marker);	// Reset variable arguments
+	va_end(marker);
 	i = n;
-	va_start(marker, n);	// Initialize variable arguments
+	va_start(marker, n);
 	while (i-- > 0)
 	{
-		s_ = va_arg(marker, char *);
+		s_ = va_arg(marker, char*);
 		if (s_)
 			strcat(strtmp, s_);
 	}
-	va_end(marker);	// Reset variable arguments
+	va_end(marker);
 	return strtmp;
 }
 
 //****************************************************************
 
-char *inkey()
+char* inkey(void)
 {
-	char *strtmp = BCX_TmpStr(2);
-	if (kbhit())
+	char* strtmp = BCX_TmpStr(2);
+	if (_kbhit())
 	{
-		int asccodereturn = getch();
-		strtmp[0] = asccodereturn;
+		int asccodereturn = _getch();
+		strtmp[0] = (char)asccodereturn;
 		strtmp[1] = 0;
 	}
 	return strtmp;
@@ -5245,10 +5478,10 @@ char *inkey()
 //               MrBcx's OPEN FILE helper Functions
 //****************************************************************
 
-FILE *GetFilePtr(int FP)
+FILE* GetFilePtr(int FP)
 {
 	{
-		register int i;
+		int i;
 		for (i = 1; i <= 255; i += 1)
 		{
 			if (FILEREC[i].FileNumber == FP)
@@ -5262,10 +5495,10 @@ FILE *GetFilePtr(int FP)
 
 //****************************************************************
 
-void SetFilePtr(int FileNumber, FILE *FP)
+void SetFilePtr(int FileNumber, FILE* FP)
 {
 	{
-		register int i;
+		int i;
 		for (i = 1; i <= 255; i += 1)
 		{
 			if (FILEREC[i].FileNumber == 0)
@@ -5283,7 +5516,7 @@ void SetFilePtr(int FileNumber, FILE *FP)
 void UnSetFilePtr(int FileNumber)
 {
 	{
-		register int i;
+		int i;
 		for (i = 1; i <= 255; i += 1)
 		{
 			if (FILEREC[i].FileNumber == FileNumber)
@@ -5298,9 +5531,9 @@ void UnSetFilePtr(int FileNumber)
 
 //****************************************************************
 
-void OpenFileForReading(int FileNumber, char *FileName)
+void OpenFileForReading(int FileNumber, char* FileName)
 {
-	static FILE *A;
+	static FILE* A;
 	A = NULL;
 
 	A = fopen(FileName, "r");
@@ -5318,9 +5551,9 @@ void OpenFileForReading(int FileNumber, char *FileName)
 
 //****************************************************************
 
-void OpenFileForWriting(int FileNumber, char *FileName)
+void OpenFileForWriting(int FileNumber, char* FileName)
 {
-	static FILE *A;
+	static FILE* A;
 	A = NULL;
 	A = fopen(FileName, "w");
 	if (A)
@@ -5336,9 +5569,9 @@ void OpenFileForWriting(int FileNumber, char *FileName)
 
 //****************************************************************
 
-void OpenFileForAppending(int FileNumber, char *FileName)
+void OpenFileForAppending(int FileNumber, char* FileName)
 {
-	static FILE *A;
+	static FILE* A;
 	A = NULL;
 
 	A = fopen(FileName, "a");
@@ -5355,9 +5588,9 @@ void OpenFileForAppending(int FileNumber, char *FileName)
 
 //****************************************************************
 
-void OpenFileForBinary(int FileNumber, char *FileName)
+void OpenFileForBinary(int FileNumber, char* FileName)
 {
-	static FILE *A;
+	static FILE* A;
 	A = NULL;
 
 	if (Exist(FileName))
@@ -5390,28 +5623,28 @@ void OpenFileForBinary(int FileNumber, char *FileName)
 
 //****************************************************************
 
-int EoF(FILE *stream)
+int EoF(FILE* stream)
 {
 	if (stream == NULL)
 		Abort("File Not Open");
-	register int c, status = ((c = fgetc(stream)) == EOF);
+	int c, status = ((c = fgetc(stream)) == EOF);
 	ungetc(c, stream);
 	return status;
 }
 
 //****************************************************************
 
-char *space(int count)
+char* space(int count)
 {
 	if (count < 1)
 		return BCX_TmpStr(1);
-	char *strtmp = BCX_TmpStr(count);
-	return (char *)memset(strtmp, 32, count);
+	char* strtmp = BCX_TmpStr(count);
+	return (char*)memset(strtmp, 32, count);
 }
 
 //****************************************************************
 
-void BumpDown()
+void BumpDown(void)
 {
 	Indent--;
 	Indent--;
@@ -5422,7 +5655,7 @@ void BumpDown()
 
 //****************************************************************
 
-void BumpUp()
+void BumpUp(void)
 {
 	if (Indent < 0)
 		Indent = 0;
@@ -5435,18 +5668,20 @@ void BumpUp()
 
 int keypress(void)
 {
-	char uchr[] = {
-		0x7E, 0x21, 0x40, 0x23, 0x24, 0x25, 0x5E, 0x26, 0x2A, 0x28, 0x29,
-		0x5F, 0x2B, 0x7C, 0x7B, 0x7D, 0x3A, 0x22, 0x3C, 0x3E, 0x3F, 0x60,
-		0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x2D,
-		0x3D, 0x5C, 0x5B, 0x5D, 0x3B, 0x27, 0x2C, 0x2E, 0x2F, 0x00
+	char uchr[] =
+	{
+	  0x7E, 0x21, 0x40, 0x23, 0x24, 0x25, 0x5E, 0x26, 0x2A, 0x28, 0x29,
+	  0x5F, 0x2B, 0x7C, 0x7B, 0x7D, 0x3A, 0x22, 0x3C, 0x3E, 0x3F, 0x60,
+	  0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x2D,
+	  0x3D, 0x5C, 0x5B, 0x5D, 0x3B, 0x27, 0x2C, 0x2E, 0x2F, 0x00
 	};
 
-	char lchr[] = {
-		0x60, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30,
-		0x2D, 0x3D, 0x5C, 0x5B, 0x5D, 0x3B, 0x27, 0x2C, 0x2E, 0x2F, 0x7E,
-		0x21, 0x40, 0x23, 0x24, 0x25, 0x5E, 0x26, 0x2A, 0x28, 0x29, 0x5F,
-		0x2B, 0x7C, 0x7B, 0x7D, 0x3A, 0x22, 0x3C, 0x3E, 0x3F, 0x00
+	char lchr[] =
+	{
+	  0x60, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30,
+	  0x2D, 0x3D, 0x5C, 0x5B, 0x5D, 0x3B, 0x27, 0x2C, 0x2E, 0x2F, 0x7E,
+	  0x21, 0x40, 0x23, 0x24, 0x25, 0x5E, 0x26, 0x2A, 0x28, 0x29, 0x5F,
+	  0x2B, 0x7C, 0x7B, 0x7D, 0x3A, 0x22, 0x3C, 0x3E, 0x3F, 0x00
 	};
 
 	int ch = 0;
@@ -5458,7 +5693,7 @@ int keypress(void)
 	DWORD OldConsoleMode;
 	GetConsoleMode(hConsoleIn, &OldConsoleMode);
 	SetConsoleMode(hConsoleIn, 0);
-	int i = 0;
+	UINT i = 0;
 	do
 	{
 		ReadConsoleInput(hConsoleIn, &InputRecord, 1, &Count);
@@ -5508,9 +5743,9 @@ int keypress(void)
 
 //****************************************************************
 
-char *Escape_Message(char *buf, int code, int ior, char *prefix)
+char* Escape_Message(char* buf, int code, int ior, char* prefix)
 {
-	char *bufp;
+	char* bufp;
 
 	if (prefix && *prefix)
 	{
@@ -5527,39 +5762,39 @@ char *Escape_Message(char *buf, int code, int ior, char *prefix)
 		sprintf(bufp, "System I/O error %d", ior);
 		switch (ior)
 		{
-			case 3:
-				strcat(buf, " (illegal I/O request)");
-				break;
-			case 7:
-				strcat(buf, " (bad file name)");
-				break;
-			case 10:
-				strcat(buf, " (file not found)");
-				break;
-			case 13:
-				strcat(buf, " (file not open)");
-				break;
-			case 14:
-				strcat(buf, " (bad input format)");
-				break;
-			case 24:
-				strcat(buf, " (not open for reading)");
-				break;
-			case 25:
-				strcat(buf, " (not open for writing)");
-				break;
-			case 26:
-				strcat(buf, " (not open for direct access)");
-				break;
-			case 28:
-				strcat(buf, " (string subscript out of range)");
-				break;
-			case 30:
-				strcat(buf, " (end-of-file)");
-				break;
-			case 38:
-				strcat(buf, " (file write error)");
-				break;
+		case 3:
+			strcat(buf, " (illegal I/O request)");
+			break;
+		case 7:
+			strcat(buf, " (bad file name)");
+			break;
+		case 10:
+			strcat(buf, " (file not found)");
+			break;
+		case 13:
+			strcat(buf, " (file not open)");
+			break;
+		case 14:
+			strcat(buf, " (bad input format)");
+			break;
+		case 24:
+			strcat(buf, " (not open for reading)");
+			break;
+		case 25:
+			strcat(buf, " (not open for writing)");
+			break;
+		case 26:
+			strcat(buf, " (not open for direct access)");
+			break;
+		case 28:
+			strcat(buf, " (string subscript out of range)");
+			break;
+		case 30:
+			strcat(buf, " (end-of-file)");
+			break;
+		case 38:
+			strcat(buf, " (file write error)");
+			break;
 		}
 	}
 	else
@@ -5568,33 +5803,33 @@ char *Escape_Message(char *buf, int code, int ior, char *prefix)
 
 		switch (code)
 		{
-			case -2:
-				strcat(buf, " (out of memory)");
-				break;
-			case -3:
-				strcat(buf, " (reference to NULL pointer)");
-				break;
-			case -4:
-				strcat(buf, " (integer overflow)");
-				break;
-			case -5:
-				strcat(buf, " (divide by zero)");
-				break;
-			case -6:
-				strcat(buf, " (Double math overflow)");
-				break;
-			case -8:
-				strcat(buf, " (value range error)");
-				break;
-			case -9:
-				strcat(buf, " (CASE value range error)");
-				break;
-			case -12:
-				strcat(buf, " (bus error)");
-				break;
-			case -20:
-				strcat(buf, " (stopped by user)");
-				break;
+		case -2:
+			strcat(buf, " (out of memory)");
+			break;
+		case -3:
+			strcat(buf, " (reference to NULL pointer)");
+			break;
+		case -4:
+			strcat(buf, " (integer overflow)");
+			break;
+		case -5:
+			strcat(buf, " (divide by zero)");
+			break;
+		case -6:
+			strcat(buf, " (Double math overflow)");
+			break;
+		case -8:
+			strcat(buf, " (value range error)");
+			break;
+		case -9:
+			strcat(buf, " (CASE value range error)");
+			break;
+		case -12:
+			strcat(buf, " (bus error)");
+			break;
+		case -20:
+			strcat(buf, " (stopped by user)");
+			break;
 		}
 	}
 	return buf;
@@ -5602,14 +5837,14 @@ char *Escape_Message(char *buf, int code, int ior, char *prefix)
 
 //****************************************************************
 
-int Critical_Escape(int code)
+void Critical_Escape(int code)
 {
 	char buf[100];
 	Esc_Code = code;
 
 	if (Top_of_Jump_Buffer)
 	{
-		BASIC_jmp_buf *jb = Top_of_Jump_Buffer;
+		BASIC_jmp_buf* jb = Top_of_Jump_Buffer;
 		Top_of_Jump_Buffer = jb->next;
 		longjmp(jb->jbuf, 1);
 	}
@@ -5620,12 +5855,11 @@ int Critical_Escape(int code)
 
 	fprintf(stderr, "%s\n", Escape_Message(buf, Esc_Code, io_Result, ""));
 	exit(1);
-	return 0;
 }
 
 //****************************************************************
 
-int IsNumber(char *a)
+int IsNumber(char* a)
 {
 	int i = 0;
 	if (!*a)
@@ -5647,14 +5881,15 @@ int IsNumber(char *a)
 }
 //****************************************************************
 
-void Setup_Console()
+void Setup_Console(void)
 {
 	HWND hConWnd;
 	hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-	hConWnd = GetConsoleWndHandle();
+	hConWnd = GetConsoleWindow();
 	ShowWindow(hConWnd, SW_HIDE);
-	TextMode(43);
+	TextMode(3000);
 	SetConsoleTitle("Gillespie BASIC for Windows by Kevin Diggins");
+	Center(hConWnd);
 	ShowWindow(hConWnd, SW_SHOW);
 }
 
@@ -5664,15 +5899,15 @@ void TextMode(int Y)
 {
 	SMALL_RECT sr;
 	COORD Coord;
-	Coord.X = 80;	// Buffer columns
-	Coord.Y = 43;	// Buffer rows
-	sr.Top = 1;	// screen position
-	sr.Left = 1;	// screen position
-	sr.Right = 80;	// screen position
-	sr.Bottom = 43;	// screen position
+	Coord.X = (SHORT)80; // Buffer columns
+	Coord.Y = (SHORT)Y;  // Buffer rows
+	sr.Top = 1;	          // screen position
+	sr.Left = 1;   	      // screen position
+	sr.Right = 80;	      // screen position
+	sr.Bottom = 43;	      // screen position
 	SetConsoleScreenBufferSize(hConsole, Coord);
 	SetConsoleWindowInfo(hConsole, TRUE, &sr);
-	color(14, 1);
+	color(FGCOLOR, BGCOLOR);
 	cls();
 }
 
@@ -5691,23 +5926,23 @@ void Cursorsh(int showFlag)	// This is the SetCursor command
 
 //****************************************************************
 
-char *mid(char *S, int start, int length)
+char* mid(char* S, int start, int length)
 {
-	char *strtmp;
-	register int tmplen = strlen(S);
+	char* strtmp;
+	int tmplen = (int)strlen(S);
 	if (start > tmplen || start < 1)
 		return BCX_TmpStr(1);
-	if (length < 0 || length > (tmplen - start) + 1)
+	if (length < 0 || length >(tmplen - start) + 1)
 		length = (tmplen - start) + 1;
 	strtmp = BCX_TmpStr(length);
-	return (char *)memcpy(strtmp, &S[start - 1], length);
+	return (char*)memcpy(strtmp, &S[start - 1], length);
 }
 
 //****************************************************************
-char *retain(char *Text, char *ValidChars)
+char* retain(char* Text, char* ValidChars)
 {
-	char *BCX_RetStr = BCX_TmpStr(strlen(Text));
-	char *temp = BCX_RetStr;
+	char* BCX_RetStr = BCX_TmpStr(strlen(Text));
+	char* temp = BCX_RetStr;
 	while (*Text)
 	{
 		if (strchr(ValidChars, *Text))
@@ -5717,10 +5952,10 @@ char *retain(char *Text, char *ValidChars)
 	return BCX_RetStr;
 }
 //****************************************************************
-int Verify(char *Src, char *Allowed)
+int Verify(char* Src, char* Allowed)
 {
 	int i, j;
-	for (i = 1; i <= strlen(Src); i++)
+	for (i = 1; i <= (int)strlen(Src); i++)
 	{
 		j = VerifyInstr(Allowed, mid(Src, i, 1));
 		if (!j)
@@ -5729,9 +5964,9 @@ int Verify(char *Src, char *Allowed)
 	return TRUE;
 }
 
-int VerifyInstr(char *mane, char *match, int offset)
+int VerifyInstr(char* mane, char* match, int offset)
 {
-	char *s;
+	char* s;
 	if (!mane || !match || !*match || offset > (int)strlen(mane))
 		return 0;
 	s = strstr(offset > 0 ? mane + offset - 1 : mane, match);
@@ -5740,9 +5975,9 @@ int VerifyInstr(char *mane, char *match, int offset)
 
 //****************************************************************
 
-char *repeat(char *a, int count)
+char* repeat(char* a, int count)
 {
-	register char *strtmp = BCX_TmpStr((1 + count) * strlen(a));
+	char* strtmp = BCX_TmpStr((1 + count) * strlen(a));
 	while (count-- > 0)
 		strtmp = strcat(strtmp, a);
 	return strtmp;
@@ -5750,7 +5985,7 @@ char *repeat(char *a, int count)
 
 //****************************************************************
 
-void swap(char *A, char *B, int length)
+void swap(char* A, char* B, int length)
 {
 	char t;
 	while (length--)
@@ -5763,11 +5998,13 @@ void swap(char *A, char *B, int length)
 
 //****************************************************************
 
-char *crlf(void)
+char* crlf(void)
 {
-	char *stmp = calloc(3, 1);
+	char* stmp = (char*)safe_calloc(3, 1);
 	stmp[0] = 13;
 	stmp[1] = 10;
 	stmp[2] = 0;
 	return stmp;
 }
+
+//****************************************************************
