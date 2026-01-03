@@ -11,9 +11,7 @@ check simple C99 compatibility. Other compilers should certainly work with littl
 
 Gillespie Basic supports -dynamic- double precision and string arrays.  Your programs can use up to 2 GB of memory, although it seems unlikely that you'll ever do so.  Gillespie Basic contains many functions not found in the vintage versions of BASIC, making it easier to turn ideas into working programs. You will also find a helpul collection of sample files that were used during testing which demonstrates some of the built-in functionality.  You should browse the Gillespie Basic text file for a complete list of functions, commands, and capabilities of this BASIC interpreter.
 
-[2026]   Gillespie Basic is easy to re-compile - just one header file and one C99 compatible source file producing a small 32-bit / 64-bit Windows executable.  
-The executable (Basic.exe) found on Github was compiled using the latest version of Microsoft Visual C++.  It also builds using Pelles C, Mingw64,
-and Clang.
+[2026]   Gillespie Basic is easy to re-compile - just one header file and one C99 compatible source file producing a small 32-bit / 64-bit Windows executable.  The executable (Basic.exe) found on Github was compiled using the latest version of Microsoft Visual C++.  It also builds using Pelles C, Mingw64, and Clang.
 
 Have fun!
 
