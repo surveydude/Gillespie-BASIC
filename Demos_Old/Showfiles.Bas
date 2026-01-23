@@ -1,0 +1,6 @@
+10 A$=FINDFIRST$("*.*" )
+20 PRINT A$
+30 DO 
+40   A$=FINDNEXT$
+50   PRINT A$
+60 LOOP UNTIL A$="" 
