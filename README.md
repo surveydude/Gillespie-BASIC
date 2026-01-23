@@ -13,6 +13,9 @@ Gillespie Basic supports -dynamic- double precision and string arrays.  Your pro
 
 [2026]   Gillespie Basic is easy to re-compile - just one header file and one C99 compatible source file producing a small 32-bit / 64-bit Windows executable.  The executable (Basic.exe) found on Github was compiled using the latest version of Microsoft Visual C++.  It also builds using Pelles C, Mingw64, and Clang.
 
+I've also included a BCX BASIC app ( sources and exe ) that provides a GUI desktop that embeds the console mode basic interpreter for quick and easy access.
+Once either app is running and you have the console in front of you, type HELP to get you going.
+
 Have fun!
 
 
