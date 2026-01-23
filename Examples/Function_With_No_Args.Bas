@@ -1,4 +1,0 @@
-10 FUNCTION Pie() = ATN(1)*4
-20 FOR I = 1 TO 20
-30   PRINT Pie()
-40 NEXT 
