@@ -1,0 +1,69 @@
+//******************************************************************************************
+// 1.62 Bug fix -- INPUT "Enter a string ", A$          ( is working again )
+//******************************************************************************************
+// 1.61 Bug fix -- DIM in SUBs was working but not in FUNCTIONs.  Working now.  
+//      DIM in SUBs and FUNCTIONs are treated as LOCAL.
+//
+//      NEW! Added "CONTINUE" for automatically jumping to the next iteration in its loop.
+//      Also allowed, for clarity, CONTINUE FOR, CONTINUE WHILE, and CONTINUE DO
+//      These all all similar in function but each also makes reading code easier to follow, 
+//      especially when used in deeply nested loops.
+//
+//******************************************************************************************
+// 1.60 Many Improvements:
+//      Improved syntax highlighting / formatting when code is LISTED
+//
+//      Supports:  HELP command (in immediate mode)
+//
+//      Supports QB-style FUNCTION returns ....... MyFunk   = value  or MyFunk$ = stringValue
+//      Supports PowerBASIC FUNCTION returns ..... FUNCTION = value
+//
+//      Supports:  EXIT DO,  EXIT WHILE, EXIT FOR
+//      
+//      Supports:  DIM AnyScalarVariable
+//      DIM now works for declaring simple scalar (non-array) variables (it's purely cosmetic)
+//
+//      DIM = LOCAL when used in SUBS and FUNCTIONS - ( This is how BCX does it. )
+//      ......................................................................
+//      Supports: ELSEIF ( Not in original Chipmunk )
+//      ......................................................................
+//      --IMPORTANT-- - ELSE and ELSEIF not allowed in Single-line statements
+//      ......................................................................
+//      Supports: Nested multi-line IF/ELSE/ELSEIF/END IF blocks 
+//
+//      Supports: STATIC variables and arrays in SUBS and FUNCTIONS
+//
+//      Supports: Pass-by-Reference for SUB/FUNCTION Parameters
+//                Simple variables are passed by reference - changes in the SUB affect the caller's 
+//                variable Expressions (like N - 1) are passed by value - evaluated and copied
+// 
+//      Supports SELECT CASE Structure -- See \Demos_New\Select_Case_test.bas
+//
+//      Supports string concat operator:
+//      Mystring$ += " World" + CHR$(32) + CRLF$ + "Goodbye"
+//          
+//      Supports shortcut numeric operations
+//      X = 10 '                [x = 10] 
+//      X += 5 '  X = 15        [X = X + 5]
+//      X -= 3 '  X = 12        [X = X - 3]
+//      X *= 2 '  X = 24        [X = X * 2]
+//      X /= 4 '  X = 6         [X = X / 4]
+// 
+//      Supports UBOUND(x[,[dim]) - returns -1, if variable is not an array
+//
+//      SLEEP with no passed argument waits indefinitely for a keypress
+//
+//      Supports RECURSIVE FUNCTIONS
+//*****************************************************************************
+// 1.59 Many Improvements:
+//      Turn IMMEDIATE MODE on or off using IMMODE ON | OFF
+//      Line Numbers are optional
+//      Block SUBS and FUNCTIONS with args and LOCAL variables (strings, numbers, arrays)
+//      GOTO and GOSUB to text labels or numbered lines
+//******************************************************************************************
+// 1.58 Includes memory safety improvements by Google Gemini
+//      Replaced linear token lookup with fast hash lookup by Claude
+//      Supports simple user-defined FUNCTIONS with up to 10 arguments
+//      User Functions must be read before they can be reliably used.
+//      Improved with BCX's enhanced USING$() function
+//******************************************************************************************
